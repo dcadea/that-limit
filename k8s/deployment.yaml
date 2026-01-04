@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: that-limit-lb
+  name: that-limit
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: that-limit-lb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: that-limit-lb
+    spec:
+      containers:
+      - image: that-limit:dev
+        name: that-limit
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
