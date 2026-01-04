@@ -44,4 +44,10 @@ make minikube-build     # Build a Docker image inside the minikube env
 make minikube-deploy    # Apply changes to create resourses in the cluster
 make minikube-up        # Start-build-deploy in one go
 ```
-Additionally you can run `minikube dashboard` to see deployments in web console.
+Additionally you can run `minikube dashboard` to check cluster in web console.
+
+Set up a tunnel to the service by running `minikube service that-limit-lb`. <br>
+This will give you an output with the url you can access to reach the service via LB:
+| NAMESPACE | NAME          | TARGET PORT | URL                    |
+|-----------|---------------|-------------|------------------------|
+| default   | that-limit-lb |             | http://127.0.0.1:56706 |
