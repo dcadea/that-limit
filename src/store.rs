@@ -1,39 +1,35 @@
-use std::collections::HashMap;
+use dashmap::DashMap;
 
 use crate::cfg::Config;
 
 #[derive(Debug)]
 pub struct Store {
-    pub store: HashMap<String, u128>,
+    pub store: DashMap<String, u128>,
     config: Config,
 }
 
 impl Store {
     pub fn new(config: Config) -> Self {
         Self {
-            store: HashMap::with_capacity(10000),
+            store: DashMap::with_capacity(10000),
             config,
         }
     }
 
-    pub fn add_public(&mut self, s: &str) {
-        if self.store.contains_key(s) {
-            self.store.insert(s.to_string(), self.config.public.quota);
-        }
+    pub fn add_public(&self, s: &str) {
+        self.store.insert(s.to_string(), self.config.public.quota);
     }
 
-    pub fn add_protected(&mut self, s: &str) {
-        if self.store.contains_key(s) {
-            self.store
-                .insert(s.to_string(), self.config.protected.quota);
-        }
+    pub fn add_protected(&self, s: &str) {
+        self.store
+            .insert(s.to_string(), self.config.protected.quota);
     }
 
-    pub fn consume(&mut self, s: &str) {
-        if let Some(b) = self.store.get(s)
-            && b.gt(&0)
-        {
-            self.store.insert(s.to_string(), b - 1);
+    pub fn consume(&self, s: &str) {
+        if let Some(mut b) = self.store.get_mut(s) {
+            if *b > 0 {
+                *b -= 1; // decrement by 1
+            }
         }
     }
 }
