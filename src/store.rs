@@ -33,3 +33,18 @@ impl Store {
         }
     }
 }
+
+pub mod handler {
+    use std::sync::Arc;
+
+    use axum::{Extension, extract::State, response::IntoResponse};
+
+    use crate::{middleware::UserId, store::Store};
+
+    pub async fn consume(
+        Extension(user_id): Extension<UserId>,
+        store: State<Arc<Store>>,
+    ) -> impl IntoResponse {
+        store.consume(&user_id.0);
+    }
+}
