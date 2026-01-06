@@ -7,7 +7,7 @@ use crate::{
     store,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppState {
     pub cfg: Arc<cfg::service::Service>,
     pub store: Arc<store::Store>,

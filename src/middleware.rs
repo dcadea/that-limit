@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::Request,
     http::{HeaderMap, StatusCode},
     middleware::Next,
@@ -10,12 +11,10 @@ pub struct UserId(pub String);
 
 pub async fn extract_user_id(
     headers: HeaderMap,
-    mut request: Request,
+    mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let user_id = headers.get("user_id");
-
-    match user_id {
+    match headers.get("user_id") {
         Some(id) => {
             request.extensions_mut().insert(UserId(
                 id.to_str()

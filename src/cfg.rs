@@ -74,7 +74,7 @@ pub mod service {
     use std::fs;
 
     use crate::cfg::{Config, Error};
-
+    #[derive(Debug)]
     pub struct Service {}
 
     impl Service {

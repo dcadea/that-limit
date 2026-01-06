@@ -1,8 +1,4 @@
-use axum::{
-    Router,
-    http::{Response, StatusCode},
-    routing::get,
-};
+use axum::{Router, http::StatusCode, routing::get};
 
 use crate::middleware::extract_user_id;
 
@@ -24,7 +20,10 @@ async fn main() {
             "/consume",
             get(store::handler::consume).layer(axum::middleware::from_fn(extract_user_id)),
         )
-        // .route("/check", get(store::handler::check))
+        .route(
+            "/check",
+            get(store::handler::check).layer(axum::middleware::from_fn(extract_user_id)),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
