@@ -13,17 +13,15 @@ async fn main() {
 
     let state = state::AppState::new(cfg);
 
+    let router_with_middleware = Router::new()
+        .route("/consume", get(store::handler::consume))
+        .route("/check", get(store::handler::check))
+        .layer(axum::middleware::from_fn(extract_user_id));
+
     let app = Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))
         .route("/config", get(cfg::handler::get))
-        .route(
-            "/consume",
-            get(store::handler::consume).layer(axum::middleware::from_fn(extract_user_id)),
-        )
-        .route(
-            "/check",
-            get(store::handler::check).layer(axum::middleware::from_fn(extract_user_id)),
-        )
+        .merge(router_with_middleware)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();

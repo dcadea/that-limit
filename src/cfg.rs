@@ -88,7 +88,7 @@ pub mod service {
 
             let config =
                 // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-                serde_json::from_str::<Config>(&content) ?;
+                serde_json::from_str::<Config>(&content)?;
 
             Ok(config)
         }
@@ -101,7 +101,7 @@ pub fn get(path: &str) -> Result<Config, Error> {
 
     let config =
         // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-        serde_json::from_str::<Config>(&content) ?;
+        serde_json::from_str::<Config>(&content)?;
 
     Ok(config)
 }

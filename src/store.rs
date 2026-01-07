@@ -15,10 +15,7 @@ impl Store {
         store.insert("jora".to_string(), 100);
         store.insert("valera".to_string(), 500);
 
-        Self {
-            store: store,
-            config,
-        }
+        Self { store, config }
     }
 
     pub fn add_public(&self, s: &str) {
