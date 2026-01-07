@@ -1,8 +1,9 @@
-use std::fmt::Display;
+use std::fs;
 
 use serde::Deserialize;
 use serde::Serialize;
 
+#[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
     Json(serde_json::Error),
@@ -73,7 +74,7 @@ pub mod service {
     use std::fs;
 
     use crate::cfg::{Config, Error};
-
+    #[derive(Debug)]
     pub struct Service {}
 
     impl Service {
@@ -87,9 +88,20 @@ pub mod service {
 
             let config =
                 // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-                serde_json::from_str::<Config>(&content) ?;
+                serde_json::from_str::<Config>(&content)?;
 
             Ok(config)
         }
     }
+}
+
+pub fn get(path: &str) -> Result<Config, Error> {
+    // let content = fs::read_to_string(path).map_err(|err| Error::Io(err))?;
+    let content = fs::read_to_string(path)?;
+
+    let config =
+        // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
+        serde_json::from_str::<Config>(&content)?;
+
+    Ok(config)
 }
