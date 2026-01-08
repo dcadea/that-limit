@@ -2,6 +2,7 @@ use axum::{Router, http::StatusCode, routing::get};
 
 use crate::middleware::extract_user_id;
 
+mod bucket;
 mod cfg;
 mod middleware;
 mod state;
