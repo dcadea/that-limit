@@ -61,6 +61,8 @@ impl Store {
                 .as_millis() as u128;
 
             if b.expires_at <= now {
+                drop(b);
+                self.store.remove(s);
                 return None;
             }
 
