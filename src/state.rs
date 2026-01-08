@@ -4,32 +4,42 @@ use axum::extract::FromRef;
 
 use crate::{
     cfg::{self, Config},
+    integration::cache,
     store,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppState {
     pub cfg: Arc<cfg::service::Service>,
     pub store: Arc<store::Store>,
+    pub redis: cache::Redis,
 }
 
 impl AppState {
-    pub fn new(cfg: Config) -> Self {
+    pub async fn new(cfg: Config) -> Self {
+        let cache_cfg = cache::Config::env().unwrap_or_default();
         Self {
             cfg: Arc::new(cfg::service::Service::new()),
             store: Arc::new(store::Store::new(cfg)),
+            redis: cache_cfg.connect().await,
         }
     }
 }
 
 impl FromRef<AppState> for Arc<cfg::service::Service> {
-    fn from_ref(input: &AppState) -> Self {
-        input.cfg.clone()
+    fn from_ref(s: &AppState) -> Self {
+        s.cfg.clone()
     }
 }
 
 impl FromRef<AppState> for Arc<store::Store> {
-    fn from_ref(input: &AppState) -> Self {
-        input.store.clone()
+    fn from_ref(s: &AppState) -> Self {
+        s.store.clone()
+    }
+}
+
+impl FromRef<AppState> for cache::Redis {
+    fn from_ref(s: &AppState) -> Self {
+        s.redis.clone()
     }
 }

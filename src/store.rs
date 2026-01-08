@@ -16,7 +16,6 @@ impl From<SystemTimeError> for Error {
     }
 }
 
-#[derive(Debug)]
 pub struct Store {
     pub store: DashMap<String, Bucket>,
     config: Config,

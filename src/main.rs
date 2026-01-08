@@ -4,15 +4,19 @@ use crate::middleware::extract_user_id;
 
 mod bucket;
 mod cfg;
+mod error;
+mod integration;
 mod middleware;
 mod state;
 mod store;
 
-#[tokio::main]
-async fn main() {
-    let cfg = cfg::get("static/config.json").unwrap();
+pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
-    let state = state::AppState::new(cfg);
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cfg = cfg::get("static/config.json")?;
+
+    let state = state::AppState::new(cfg).await;
 
     let router_with_middleware = Router::new()
         .route("/consume", get(store::handler::consume))
@@ -25,6 +29,7 @@ async fn main() {
         .merge(router_with_middleware)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
