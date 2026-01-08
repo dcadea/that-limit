@@ -41,7 +41,7 @@ pub enum Criteria {
 pub struct BucketCfg {
     criteria: Criteria,
     pub quota: u128,
-    reset_in: u128,
+    pub reset_in: u64,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
