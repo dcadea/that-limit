@@ -1,6 +1,12 @@
-use axum::{Router, http::StatusCode, routing::get};
+use axum::{
+    Router,
+    http::StatusCode,
+    middleware::{from_fn, from_fn_with_state},
+    routing::get,
+};
+use tower::ServiceBuilder;
 
-use crate::middleware::extract_user_id;
+use crate::middleware::{extract_user_id, lease_tokens};
 
 mod bucket;
 mod cfg;
@@ -18,15 +24,19 @@ async fn main() -> Result<()> {
 
     let state = state::AppState::new(cfg).await;
 
-    let router_with_middleware = Router::new()
+    let protected = Router::new()
         .route("/consume", get(store::handler::consume))
         .route("/check", get(store::handler::check))
-        .layer(axum::middleware::from_fn(extract_user_id));
+        .route_layer(
+            ServiceBuilder::new()
+                .layer(from_fn(extract_user_id))
+                .layer(from_fn_with_state(state.clone(), lease_tokens)),
+        );
 
     let app = Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))
         .route("/config", get(cfg::handler::get))
-        .merge(router_with_middleware)
+        .merge(protected)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;

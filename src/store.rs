@@ -1,13 +1,20 @@
-use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
+use std::{
+    net::Ipv4Addr,
+    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
+};
 
 use dashmap::DashMap;
 
-use crate::{bucket::Bucket, cfg::Config};
+use crate::{
+    bucket::{self, Bucket},
+    cfg::Config,
+};
 
+#[derive(Debug)]
 pub enum Error {
     Bucket(SystemTimeError),
-    Exhausted(String),
-    NotFound(String),
+    Exhausted(bucket::Id),
+    NotFound(bucket::Id),
 }
 
 impl From<SystemTimeError> for Error {
@@ -17,7 +24,7 @@ impl From<SystemTimeError> for Error {
 }
 
 pub struct Store {
-    pub store: DashMap<String, Bucket>,
+    store: DashMap<bucket::Id, Bucket>,
     config: Config,
 }
 
@@ -26,10 +33,13 @@ impl Store {
         let store = DashMap::with_capacity(10000);
 
         // TODO: remove
-        store.insert("jora".to_string(), Bucket::new(&config.public).unwrap());
         store.insert(
-            "valera".to_string(),
-            Bucket::new(&config.protected).unwrap(),
+            bucket::Id::Protected("jora".to_string()),
+            Bucket::new(500, 3600).unwrap(),
+        );
+        store.insert(
+            bucket::Id::Public(Ipv4Addr::new(10, 20, 30, 40)),
+            Bucket::new(10000, 600).unwrap(),
         );
 
         // TODO: perform cleanup every 5s
@@ -38,22 +48,17 @@ impl Store {
         Self { store, config }
     }
 
-    pub fn add_public(&self, s: &str) -> Result<(), Error> {
-        self.store
-            .insert(s.to_string(), Bucket::new(&self.config.public)?);
+    pub const fn config(&self) -> &Config {
+        &self.config
+    }
 
+    pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: u64) -> Result<(), Error> {
+        self.store.insert(b_id, Bucket::new(tokens, ttl)?);
         Ok(())
     }
 
-    pub fn add_protected(&self, s: &str) -> Result<(), Error> {
-        self.store
-            .insert(s.to_string(), Bucket::new(&self.config.protected)?);
-
-        Ok(())
-    }
-
-    pub fn consume(&self, s: &str) -> Option<u128> {
-        if let Some(mut b) = self.store.get_mut(s) {
+    pub fn consume(&self, b_id: &bucket::Id) -> Option<u128> {
+        if let Some(mut b) = self.store.get_mut(b_id) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -61,7 +66,7 @@ impl Store {
 
             if b.expires_at <= now {
                 drop(b);
-                self.store.remove(s);
+                self.store.remove(b_id);
                 return None;
             }
 
@@ -75,8 +80,12 @@ impl Store {
         None
     }
 
-    pub fn get_tokens(&self, s: &str) -> Result<u128, Error> {
-        match self.store.get(s) {
+    pub fn check(&self, b_id: &bucket::Id) -> bool {
+        self.store.contains_key(b_id)
+    }
+
+    pub fn get_tokens(&self, b_id: &bucket::Id) -> Result<u128, Error> {
+        match self.store.get(b_id) {
             Some(b) => {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -84,12 +93,12 @@ impl Store {
                     .as_millis() as u128;
 
                 if b.expires_at <= now {
-                    return Err(Error::Exhausted(s.to_string()));
+                    return Err(Error::Exhausted(b_id.clone()));
                 }
 
                 Ok(b.tokens)
             }
-            None => Err(Error::NotFound(s.to_string())),
+            None => Err(Error::NotFound(b_id.clone())),
         }
     }
 }
@@ -100,46 +109,46 @@ pub mod handler {
     use axum::{Extension, extract::State, http::StatusCode, response::IntoResponse};
 
     use crate::{
-        middleware::UserId,
+        bucket,
         store::{Error, Store},
     };
 
     pub async fn consume(
-        Extension(user_id): Extension<UserId>,
+        b_id: Extension<bucket::Id>,
         store: State<Arc<Store>>,
     ) -> impl IntoResponse {
-        let tokens_left = store.consume(&user_id.0);
+        let tokens_left = store.consume(&b_id);
 
         let response = serde_json::json!({
-            "user_id": user_id.0,
+            "bucket_id": b_id.0,
             "tokens_left": tokens_left.unwrap_or(0)
         });
         axum::Json(response)
     }
 
     pub async fn check(
-        Extension(user_id): Extension<UserId>,
+        Extension(b_id): Extension<bucket::Id>,
         store: State<Arc<Store>>,
     ) -> impl IntoResponse {
-        let t = store.get_tokens(&user_id.0);
+        let t = store.get_tokens(&b_id);
 
         match t {
             Ok(t) => {
                 let response = serde_json::json!({
-                    "user_id": user_id.0,
+                    "user_id": b_id,
                     "tokens_left": t
                 });
                 (StatusCode::OK, axum::Json(response))
             }
-            Err(Error::NotFound(user_id)) => {
+            Err(Error::NotFound(b_id)) => {
                 let response = serde_json::json!({
-                    "error": format!("User: {} not found in store", user_id)
+                    "error": format!("User: {} not found in store", b_id)
                 });
                 (StatusCode::NOT_FOUND, axum::Json(response))
             }
-            Err(Error::Exhausted(user_id)) => {
+            Err(Error::Exhausted(b_id)) => {
                 let response = serde_json::json!({
-                    "error": format!("User: {} consumed all tokens", user_id)
+                    "error": format!("User: {} consumed all tokens", b_id)
                 });
                 (StatusCode::TOO_MANY_REQUESTS, axum::Json(response))
             }

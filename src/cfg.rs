@@ -52,45 +52,19 @@ pub struct Config {
 }
 
 pub mod handler {
-    use std::sync::Arc;
 
-    use axum::{Json, extract::State, http::StatusCode};
+    use axum::{Json, http::StatusCode};
 
-    use crate::cfg::{Config, service::Service};
+    use crate::cfg::Config;
 
-    pub async fn get(service: State<Arc<Service>>) -> Result<Json<Config>, (StatusCode, String)> {
-        match service.get("static/config.json") {
+    pub async fn get() -> Result<Json<Config>, (StatusCode, String)> {
+        match super::get("static/config.json") {
             Ok(config) => Ok(Json(config)),
             // Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
             Err(_) => Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_string(),
             )),
-        }
-    }
-}
-
-pub mod service {
-    use std::fs;
-
-    use crate::cfg::{Config, Error};
-    #[derive(Debug)]
-    pub struct Service {}
-
-    impl Service {
-        pub fn new() -> Self {
-            Self {}
-        }
-
-        pub fn get(&self, path: &str) -> Result<Config, Error> {
-            // let content = fs::read_to_string(path).map_err(|err| Error::Io(err))?;
-            let content = fs::read_to_string(path)?;
-
-            let config =
-                // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-                serde_json::from_str::<Config>(&content)?;
-
-            Ok(config)
         }
     }
 }
