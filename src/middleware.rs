@@ -1,29 +1,80 @@
+use std::sync::Arc;
+
 use axum::{
+    Extension,
     body::Body,
-    extract::Request,
-    http::{HeaderMap, StatusCode},
+    extract::{Request, State},
+    http::HeaderMap,
     middleware::Next,
     response::Response,
 };
 
-#[derive(Clone)]
-pub struct UserId(pub String);
+use crate::{
+    bucket, error,
+    integration::cache::{self, Redis},
+    store::Store,
+};
 
 pub async fn extract_user_id(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, error::Error> {
     match headers.get("user_id") {
         Some(id) => {
-            request.extensions_mut().insert(UserId(
-                id.to_str()
-                    .map_err(|_| StatusCode::BAD_REQUEST)?
-                    .to_string(),
-            ));
+            request
+                .extensions_mut()
+                .insert(bucket::Id::Protected(id.to_str()?.to_string()));
 
             Ok(next.run(request).await)
         }
-        None => Err(StatusCode::UNAUTHORIZED),
+        None => Err(error::Error::Unauthorized),
     }
+}
+
+const LEASE_SIZE: u128 = 100;
+
+pub async fn lease_tokens(
+    Extension(b_id): Extension<bucket::Id>,
+    store: State<Arc<Store>>,
+    redis: State<Redis>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, error::Error> {
+    if store.check(&b_id) {
+        return Ok(next.run(request).await);
+    }
+
+    let key = cache::Key::from(&b_id);
+
+    let tokens: cache::Result<u128> = redis.get(&key).await;
+
+    let ttl = match tokens {
+        Ok(tokens) => {
+            let ttl = redis.ttl(&key).await?;
+            redis.set_keep_ttl(&key, tokens - LEASE_SIZE).await?;
+            ttl
+        }
+
+        Err(cache::Error::NotFound(_)) => {
+            let cfg = store.config();
+            let ttl = cfg.protected.reset_in;
+
+            redis
+                .set_ex(&key, cfg.protected.quota - LEASE_SIZE, ttl)
+                .await?;
+
+            ttl
+        }
+
+        Err(_) => {
+            return Err(error::Error::Internal(
+                "Failed to lookup tokens by key".to_string(),
+            ));
+        }
+    };
+
+    store.add(b_id, LEASE_SIZE, ttl);
+
+    Ok(next.run(request).await)
 }
