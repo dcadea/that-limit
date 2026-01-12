@@ -3,12 +3,30 @@ pub mod cache {
         env,
         fmt::{Display, Formatter},
         net::Ipv4Addr,
+        time::Duration,
     };
 
     use log::{error, trace, warn};
-    use redis::{AsyncCommands, SetOptions};
+    use redis::{AsyncCommands, RedisError, SetOptions};
 
     use crate::bucket;
+
+    pub type Result<T> = std::result::Result<T, Error>;
+
+    #[derive(Debug)]
+    pub enum Error {
+        Redis(RedisError),
+        KeyDoesNotExist(String),
+        NoExpiration(String),
+        Unexpected(String),
+        NotFound(String),
+    }
+
+    impl From<RedisError> for Error {
+        fn from(e: RedisError) -> Self {
+            Self::Redis(e)
+        }
+    }
 
     #[derive(Clone, Debug)]
     pub enum Key<'a> {
@@ -96,36 +114,32 @@ pub mod cache {
     }
 
     impl Redis {
-        pub async fn set_keep_ttl<V>(&self, key: &Key<'_>, value: V)
+        pub async fn set_keep_ttl<V>(&self, key: &Key<'_>, value: V) -> Result<()>
         where
             V: redis::ToSingleRedisArg + Send + Sync,
         {
             trace!("SET with KEEPTTL -> {key:?}");
             let mut con = self.con.clone();
-            if let Err(e) = con
-                .set_options::<_, _, ()>(
-                    &key,
-                    value,
-                    SetOptions::default().with_expiration(redis::SetExpiry::KEEPTTL),
-                )
-                .await
-            {
-                error!("Failed to SET with KEEPTTL on {key:?}. Reason: {e:?}");
-            }
+            con.set_options::<_, _, ()>(
+                &key,
+                value,
+                SetOptions::default().with_expiration(redis::SetExpiry::KEEPTTL),
+            )
+            .await?;
+            Ok(())
         }
 
-        pub async fn set_ex<V>(&self, key: &Key<'_>, value: V, ttl: u64)
+        pub async fn set_ex<V>(&self, key: &Key<'_>, value: V, ttl: Duration) -> Result<()>
         where
             V: redis::ToSingleRedisArg + Send + Sync,
         {
             trace!("SET_EX -> {key:?}");
             let mut con = self.con.clone();
-            if let Err(e) = con.set_ex::<_, _, ()>(&key, value, ttl).await {
-                error!("Failed to SET_EX on {key:?}. Reason: {e:?}");
-            }
+            con.set_ex::<_, _, ()>(&key, value, ttl.as_secs()).await?;
+            Ok(())
         }
 
-        pub async fn get<V>(&self, key: &Key<'_>) -> Option<V>
+        pub async fn get<V>(&self, key: &Key<'_>) -> Result<V>
         where
             V: redis::FromRedisValue,
         {
@@ -134,36 +148,37 @@ pub mod cache {
                 Ok(value) => {
                     let status = if value.is_some() { "Hit" } else { "Miss" };
                     trace!("GET ({status}) -> {key:?}");
-                    value
+
+                    value.ok_or(Error::NotFound(key.to_string()))
                 }
                 Err(e) => {
                     error!("Failed to GET on {key:?}. Reason: {e:?}");
-                    None
+                    Err(Error::from(e))
                 }
             }
         }
 
-        pub async fn ttl(&self, key: &Key<'_>) -> Option<u64> {
+        pub async fn ttl(&self, key: &Key<'_>) -> Result<Duration> {
             let mut con = self.con.clone();
             match con.ttl::<_, i64>(key).await {
-                Ok(ttl) if ttl > 0 => Some(ttl as u64),
-                Ok(_) => {
-                    // -1 - key exists but no expiration
-                    // -2 - key does not exist
-                    None
+                Ok(ttl) if ttl > 0 => Ok(Duration::from_secs(ttl.cast_unsigned())),
+                Ok(v) => {
+                    if v == -1 {
+                        Err(Error::NoExpiration(key.to_string()))
+                    } else if v == -2 {
+                        Err(Error::KeyDoesNotExist(key.to_string()))
+                    } else {
+                        Err(Error::Unexpected("Invalid TTL value".to_string()))
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to identify TTL on {key:?}. Reason: {e:?}");
-                    None
-                }
+                Err(e) => Err(Error::from(e)),
             }
         }
 
-        pub async fn del(&self, key: &Key<'_>) {
+        pub async fn del(&self, key: &Key<'_>) -> Result<()> {
             let mut con = self.con.clone();
-            if let Err(e) = con.del::<_, ()>(&key).await {
-                error!("Failed to DEL on {key:?}. Reason: {e:?}");
-            }
+            con.del::<_, ()>(&key).await?;
+            Ok(())
         }
     }
 }

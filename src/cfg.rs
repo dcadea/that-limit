@@ -3,6 +3,8 @@ use std::fs;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::bucket;
+
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
@@ -30,42 +32,22 @@ impl From<serde_json::Error> for Error {
 //     }
 // }
 
-#[derive(Deserialize, Serialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Criteria {
-    Sub,
-    Ip,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct BucketCfg {
-    criteria: Criteria,
-    pub quota: u128,
-    pub reset_in: u64,
-}
-
 #[derive(Deserialize, Debug, Serialize)]
 pub struct Config {
     pub sync_every: u8,
-    pub protected: BucketCfg,
-    pub public: BucketCfg,
+    pub protected: bucket::Config,
+    pub public: bucket::Config,
 }
 
 pub mod handler {
 
-    use axum::{Json, http::StatusCode};
+    use axum::Json;
 
-    use crate::cfg::Config;
+    use crate::{cfg::Config, error};
 
-    pub async fn get() -> Result<Json<Config>, (StatusCode, String)> {
-        match super::get("static/config.json") {
-            Ok(config) => Ok(Json(config)),
-            // Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
-            Err(_) => Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error".to_string(),
-            )),
-        }
+    pub async fn get() -> Result<Json<Config>, error::Error> {
+        let config = super::get("static/config.json")?;
+        Ok(Json(config))
     }
 }
 

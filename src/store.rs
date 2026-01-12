@@ -1,6 +1,6 @@
 use std::{
     net::Ipv4Addr,
-    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use dashmap::DashMap;
@@ -12,15 +12,8 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Error {
-    Bucket(SystemTimeError),
     Exhausted(bucket::Id),
     NotFound(bucket::Id),
-}
-
-impl From<SystemTimeError> for Error {
-    fn from(e: SystemTimeError) -> Self {
-        Self::Bucket(e)
-    }
 }
 
 pub struct Store {
@@ -35,11 +28,11 @@ impl Store {
         // TODO: remove
         store.insert(
             bucket::Id::Protected("jora".to_string()),
-            Bucket::new(500, 3600).unwrap(),
+            Bucket::new(500, Duration::from_secs(3600)),
         );
         store.insert(
             bucket::Id::Public(Ipv4Addr::new(10, 20, 30, 40)),
-            Bucket::new(10000, 600).unwrap(),
+            Bucket::new(10000, Duration::from_secs(600)),
         );
 
         // TODO: perform cleanup every 5s
@@ -52,19 +45,13 @@ impl Store {
         &self.config
     }
 
-    pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: u64) -> Result<(), Error> {
-        self.store.insert(b_id, Bucket::new(tokens, ttl)?);
-        Ok(())
+    pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: Duration) {
+        self.store.insert(b_id, Bucket::new(tokens, ttl));
     }
 
     pub fn consume(&self, b_id: &bucket::Id) -> Option<u128> {
         if let Some(mut b) = self.store.get_mut(b_id) {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u128;
-
-            if b.expires_at <= now {
+            if b.expires_at <= SystemTime::now() {
                 drop(b);
                 self.store.remove(b_id);
                 return None;
@@ -87,12 +74,7 @@ impl Store {
     pub fn get_tokens(&self, b_id: &bucket::Id) -> Result<u128, Error> {
         match self.store.get(b_id) {
             Some(b) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u128;
-
-                if b.expires_at <= now {
+                if b.expires_at <= SystemTime::now() {
                     return Err(Error::Exhausted(b_id.clone()));
                 }
 
@@ -151,12 +133,6 @@ pub mod handler {
                     "error": format!("User: {} consumed all tokens", b_id)
                 });
                 (StatusCode::TOO_MANY_REQUESTS, axum::Json(response))
-            }
-            Err(_) => {
-                let response = serde_json::json!({
-                    "error": "Internal server error",
-                });
-                (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(response))
             }
         }
     }

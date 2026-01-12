@@ -4,13 +4,13 @@ use axum::{
     Extension,
     body::Body,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     middleware::Next,
     response::Response,
 };
 
 use crate::{
-    bucket,
+    bucket, error,
     integration::cache::{self, Redis},
     store::Store,
 };
@@ -19,18 +19,16 @@ pub async fn extract_user_id(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, error::Error> {
     match headers.get("user_id") {
         Some(id) => {
-            request.extensions_mut().insert(bucket::Id::Protected(
-                id.to_str()
-                    .map_err(|_| StatusCode::BAD_REQUEST)?
-                    .to_string(),
-            ));
+            request
+                .extensions_mut()
+                .insert(bucket::Id::Protected(id.to_str()?.to_string()));
 
             Ok(next.run(request).await)
         }
-        None => Err(StatusCode::UNAUTHORIZED),
+        None => Err(error::Error::Unauthorized),
     }
 }
 
@@ -42,38 +40,41 @@ pub async fn lease_tokens(
     redis: State<Redis>,
     request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, error::Error> {
     if store.check(&b_id) {
         return Ok(next.run(request).await);
     }
 
     let key = cache::Key::from(&b_id);
 
-    let tokens: Option<u128> = redis.get(&key).await;
+    let tokens: cache::Result<u128> = redis.get(&key).await;
 
     let ttl = match tokens {
-        Some(tokens) => {
-            if let Some(ttl) = redis.ttl(&key).await {
-                redis.set_keep_ttl(&key, tokens - LEASE_SIZE).await;
-                Some(ttl)
-            } else {
-                None
-            }
+        Ok(tokens) => {
+            let ttl = redis.ttl(&key).await?;
+            redis.set_keep_ttl(&key, tokens - LEASE_SIZE).await?;
+            ttl
         }
-        None => {
+
+        Err(cache::Error::NotFound(_)) => {
             let cfg = store.config();
             let ttl = cfg.protected.reset_in;
+
             redis
                 .set_ex(&key, cfg.protected.quota - LEASE_SIZE, ttl)
-                .await;
-            Some(ttl)
+                .await?;
+
+            ttl
+        }
+
+        Err(_) => {
+            return Err(error::Error::Internal(
+                "Failed to lookup tokens by key".to_string(),
+            ));
         }
     };
 
-    if let Some(ttl) = ttl {
-        // FIXME
-        store.add(b_id, LEASE_SIZE, ttl).unwrap();
-    }
+    store.add(b_id, LEASE_SIZE, ttl);
 
     Ok(next.run(request).await)
 }
