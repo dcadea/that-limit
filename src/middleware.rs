@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{string::ToString, sync::Arc};
 
 use axum::{
     Extension,
@@ -23,13 +23,15 @@ pub async fn extract_identifier(
 ) -> Result<Response, error::Error> {
     let protected = headers
         .get("user_id")
-        .and_then(|user_id| Some(bucket::Id::Protected(user_id.to_str().ok()?.to_string())));
+        .and_then(|id| id.to_str().ok())
+        .map(ToString::to_string)
+        .map(bucket::Id::Protected);
 
     let public = request
         .extensions()
         .get::<ClientIp>()
         .map(|ClientIp(ip)| *ip)
-        .map(|ip| bucket::Id::Public(ip));
+        .map(bucket::Id::Public);
 
     match protected.or(public) {
         Some(id) => {
