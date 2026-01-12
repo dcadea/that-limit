@@ -1,8 +1,4 @@
-use axum::{
-    Json,
-    http::{self, StatusCode},
-    response::IntoResponse,
-};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
 use crate::{cfg, integration::cache};
@@ -12,7 +8,6 @@ pub enum Error {
     Cfg(cfg::Error),
     Io(std::io::Error),
     Cache(cache::Error),
-    ToStr(http::header::ToStrError),
     Unauthorized,
     Internal(String),
 }
@@ -35,12 +30,6 @@ impl From<cache::Error> for Error {
     }
 }
 
-impl From<http::header::ToStrError> for Error {
-    fn from(e: http::header::ToStrError) -> Self {
-        Self::ToStr(e)
-    }
-}
-
 #[derive(Serialize)]
 struct ErrorResponse {
     error_message: String,
@@ -49,10 +38,6 @@ struct ErrorResponse {
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         let (status, error_message) = match self {
-            Self::ToStr(_) => (
-                StatusCode::BAD_REQUEST,
-                "Header value is not a string".to_string(),
-            ),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,

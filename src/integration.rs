@@ -2,7 +2,7 @@ pub mod cache {
     use std::{
         env,
         fmt::{Display, Formatter},
-        net::Ipv4Addr,
+        net::IpAddr,
         time::Duration,
     };
 
@@ -31,7 +31,7 @@ pub mod cache {
     #[derive(Clone, Debug)]
     pub enum Key<'a> {
         Sub(&'a str),
-        Ip(Ipv4Addr),
+        Ip(IpAddr),
     }
 
     impl Display for Key<'_> {
