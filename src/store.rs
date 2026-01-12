@@ -1,4 +1,7 @@
-use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
+};
 
 use dashmap::DashMap;
 
@@ -33,8 +36,7 @@ impl Store {
             Bucket::new(&config.protected).unwrap(),
         );
 
-        // TODO: perform cleanup every 5s
-        // tokio::spawn(|| {})
+        Store::cleanup();
 
         Self { store, config }
     }
@@ -92,6 +94,37 @@ impl Store {
             }
             None => Err(Error::NotFound(s.to_string())),
         }
+    }
+
+    fn cleanup(&self) {
+        let store = Arc::clone(&self.store);
+
+        tokio::spawn({
+            async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u128;
+                    let keys_to_remove: Vec<String> = store
+                        .iter()
+                        .filter_map(|entry| {
+                            let b = entry.value();
+                            if b.expires_at <= now {
+                                Some(entry.key().clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    for key in keys_to_remove {
+                        store.remove(&key);
+                    }
+                }
+            }
+        });
     }
 }
 
