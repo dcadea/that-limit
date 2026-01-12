@@ -82,26 +82,28 @@ impl Store {
         }
     }
 
-    pub fn start_cleanup_task(self: Arc<Self>) {
-            tokio::spawn(async move {
-                let interval = tokio::time::interval(Duration::from_secs(5));
+    pub fn start_cleanup_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
 
-                loop {
-                    interval.tick().await;
-                    let now = SystemTime::now();
+            loop {
+                interval.tick().await;
+                let now = SystemTime::now();
 
-                    let expired: Vec<_> = self.store
-                        .iter()
-                        .filter(|e| e.value().expires_at <= now)
-                        .map(|e| e.key().clone())
-                        .collect();
+                let expired: Vec<_> = self
+                    .store
+                    .iter()
+                    .filter(|e| e.value().expires_at <= now)
+                    .map(|e| e.key().clone())
+                    .collect();
 
-                    for key in expired {
-                        self.store.remove(&key);
-                    }
+                for key in expired {
+                    self.store.remove(&key);
                 }
-            });
-        }
+            }
+        })
+    }
+}
 
 pub mod handler {
     use std::sync::Arc;

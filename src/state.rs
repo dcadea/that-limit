@@ -16,7 +16,7 @@ impl AppState {
 
         let store = Arc::new(store::Store::new(cfg));
 
-        store.start_cleanup_task();
+        store.clone().start_cleanup_task();
 
         Self {
             store,
