@@ -3,6 +3,8 @@ use std::fs;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::bucket;
+
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
@@ -30,68 +32,22 @@ impl From<serde_json::Error> for Error {
 //     }
 // }
 
-#[derive(Deserialize, Serialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Criteria {
-    Sub,
-    Ip,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct BucketCfg {
-    criteria: Criteria,
-    pub quota: u128,
-    pub reset_in: u64,
-}
-
 #[derive(Deserialize, Debug, Serialize)]
 pub struct Config {
     pub sync_every: u8,
-    pub protected: BucketCfg,
-    pub public: BucketCfg,
+    pub protected: bucket::Config,
+    pub public: bucket::Config,
 }
 
 pub mod handler {
-    use std::sync::Arc;
 
-    use axum::{Json, extract::State, http::StatusCode};
+    use axum::Json;
 
-    use crate::cfg::{Config, service::Service};
+    use crate::{cfg::Config, error};
 
-    pub async fn get(service: State<Arc<Service>>) -> Result<Json<Config>, (StatusCode, String)> {
-        match service.get("static/config.json") {
-            Ok(config) => Ok(Json(config)),
-            // Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
-            Err(_) => Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error".to_string(),
-            )),
-        }
-    }
-}
-
-pub mod service {
-    use std::fs;
-
-    use crate::cfg::{Config, Error};
-    #[derive(Debug)]
-    pub struct Service {}
-
-    impl Service {
-        pub fn new() -> Self {
-            Self {}
-        }
-
-        pub fn get(&self, path: &str) -> Result<Config, Error> {
-            // let content = fs::read_to_string(path).map_err(|err| Error::Io(err))?;
-            let content = fs::read_to_string(path)?;
-
-            let config =
-                // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-                serde_json::from_str::<Config>(&content)?;
-
-            Ok(config)
-        }
+    pub async fn get() -> Result<Json<Config>, error::Error> {
+        let config = super::get("static/config.json")?;
+        Ok(Json(config))
     }
 }
 
