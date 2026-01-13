@@ -14,12 +14,8 @@ impl AppState {
     pub async fn new(cfg: Config) -> Self {
         let cache_cfg = cache::Config::env().unwrap_or_default();
 
-        let store = Arc::new(store::Store::new(cfg));
-
-        store.clone().start_cleanup_task();
-
         Self {
-            store,
+            store: store::Store::new(cfg),
             redis: cache_cfg.connect().await,
         }
     }

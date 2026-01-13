@@ -5,6 +5,7 @@ use std::{
 };
 
 use dashmap::DashMap;
+use tokio::sync::oneshot;
 
 use crate::{
     bucket::{self, Bucket},
@@ -23,7 +24,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Arc<Self> {
         let store = DashMap::with_capacity(10000);
 
         // TODO: remove
@@ -36,7 +37,11 @@ impl Store {
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
-        Self { store, config }
+        let store = Arc::new(Self { store, config });
+
+        store.clone().start_cleanup_task(None);
+
+        store
     }
 
     pub const fn config(&self) -> &Config {
@@ -82,26 +87,39 @@ impl Store {
         }
     }
 
-    pub fn start_cleanup_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn start_cleanup_task(self: Arc<Self>, mut shutdown: Option<oneshot::Receiver<()>>) {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
-                interval.tick().await;
-                let now = SystemTime::now();
+                tokio::select! {
+                    _ = async {
+                        if let Some(rx) = &mut shutdown {
+                            let _ = rx.await;
+                        } else {
+                            std::future::pending::<()>().await
+                        }
+                    } => {
+                        println!("Cleanup task received shutdown signal, exiting...");
+                        break;
+                    }
 
-                let expired: Vec<_> = self
-                    .store
-                    .iter()
-                    .filter(|e| e.value().expires_at <= now)
-                    .map(|e| e.key().clone())
-                    .collect();
+                    _ = interval.tick() => {
+                        let now = SystemTime::now();
+                        let expired: Vec<_> = self
+                            .store
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
 
-                for key in expired {
-                    self.store.remove(&key);
+                        for key in expired {
+                            self.store.remove(&key);
+                        }
+                    }
                 }
             }
-        })
+        });
     }
 }
 
