@@ -13,8 +13,9 @@ pub struct AppState {
 impl AppState {
     pub async fn new(cfg: Config) -> Self {
         let cache_cfg = cache::Config::env().unwrap_or_default();
+
         Self {
-            store: Arc::new(store::Store::new(cfg)),
+            store: store::Store::new(cfg),
             redis: cache_cfg.connect().await,
         }
     }

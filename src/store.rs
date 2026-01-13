@@ -1,5 +1,6 @@
 use std::{
     net::Ipv4Addr,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -22,7 +23,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Arc<Self> {
         let store = DashMap::with_capacity(10000);
 
         // TODO: remove
@@ -35,10 +36,43 @@ impl Store {
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
-        // TODO: perform cleanup every 5s
-        // tokio::spawn(|| {})
+        let s = Arc::new(Self { store, config });
 
-        Self { store, config }
+        let s_clone = s.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+
+            loop {
+                tokio::select! {
+                    _ = async {
+                        // TODO: gracefully shutdown
+                        // if let Some(rx) = &mut shutdown {
+                        //     let _ = rx.await;
+                        // } else {
+                        //     std::future::pending::<()>().await
+                        // }
+                    } => {
+                        println!("Cleanup task received shutdown signal, exiting...");
+                        break;
+                    }
+
+                    _ = interval.tick() => {
+                        let now = SystemTime::now();
+                        let expired: Vec<_> = s_clone.store
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
+
+                        for key in expired {
+                            s_clone.store.remove(&key);
+                        }
+                    }
+                }
+            }
+        });
+
+        s
     }
 
     pub const fn config(&self) -> &Config {
