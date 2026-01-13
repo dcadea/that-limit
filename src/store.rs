@@ -5,7 +5,6 @@ use std::{
 };
 
 use dashmap::DashMap;
-use tokio::sync::oneshot;
 
 use crate::{
     bucket::{self, Bucket},
@@ -37,11 +36,43 @@ impl Store {
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
-        let store = Arc::new(Self { store, config });
+        let s = Arc::new(Self { store, config });
 
-        store.clone().start_cleanup_task(None);
+        let s_clone = s.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
 
-        store
+            loop {
+                tokio::select! {
+                    _ = async {
+                        // TODO: gracefully shutdown
+                        // if let Some(rx) = &mut shutdown {
+                        //     let _ = rx.await;
+                        // } else {
+                        //     std::future::pending::<()>().await
+                        // }
+                    } => {
+                        println!("Cleanup task received shutdown signal, exiting...");
+                        break;
+                    }
+
+                    _ = interval.tick() => {
+                        let now = SystemTime::now();
+                        let expired: Vec<_> = s_clone.store
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
+
+                        for key in expired {
+                            s_clone.store.remove(&key);
+                        }
+                    }
+                }
+            }
+        });
+
+        s
     }
 
     pub const fn config(&self) -> &Config {
@@ -85,41 +116,6 @@ impl Store {
             }
             None => Err(Error::NotFound(b_id.clone())),
         }
-    }
-
-    pub fn start_cleanup_task(self: Arc<Self>, mut shutdown: Option<oneshot::Receiver<()>>) {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-
-            loop {
-                tokio::select! {
-                    _ = async {
-                        if let Some(rx) = &mut shutdown {
-                            let _ = rx.await;
-                        } else {
-                            std::future::pending::<()>().await
-                        }
-                    } => {
-                        println!("Cleanup task received shutdown signal, exiting...");
-                        break;
-                    }
-
-                    _ = interval.tick() => {
-                        let now = SystemTime::now();
-                        let expired: Vec<_> = self
-                            .store
-                            .iter()
-                            .filter(|e| e.value().expires_at <= now)
-                            .map(|e| e.key().clone())
-                            .collect();
-
-                        for key in expired {
-                            self.store.remove(&key);
-                        }
-                    }
-                }
-            }
-        });
     }
 }
 
