@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{string::ToString, sync::Arc};
 
 use axum::{
     Extension,
@@ -8,6 +8,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use axum_client_ip::ClientIp;
 
 use crate::{
     bucket, error,
@@ -15,17 +16,26 @@ use crate::{
     store::Store,
 };
 
-pub async fn extract_user_id(
+pub async fn extract_identifier(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, error::Error> {
-    match headers.get("user_id") {
-        Some(id) => {
-            request
-                .extensions_mut()
-                .insert(bucket::Id::Protected(id.to_str()?.to_string()));
+    let protected = headers
+        .get("user_id")
+        .and_then(|id| id.to_str().ok())
+        .map(ToString::to_string)
+        .map(bucket::Id::Protected);
 
+    let public = request
+        .extensions()
+        .get::<ClientIp>()
+        .map(|ClientIp(ip)| *ip)
+        .map(bucket::Id::Public);
+
+    match protected.or(public) {
+        Some(id) => {
+            request.extensions_mut().insert(id);
             Ok(next.run(request).await)
         }
         None => Err(error::Error::Unauthorized),

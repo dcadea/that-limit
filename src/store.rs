@@ -1,5 +1,5 @@
 use std::{
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -32,7 +32,7 @@ impl Store {
             Bucket::new(500, Duration::from_secs(3600)),
         );
         store.insert(
-            bucket::Id::Public(Ipv4Addr::new(10, 20, 30, 40)),
+            bucket::Id::Public(IpAddr::V4(Ipv4Addr::new(10, 20, 30, 40))),
             Bucket::new(10000, Duration::from_secs(600)),
         );
 

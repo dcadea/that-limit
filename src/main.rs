@@ -1,12 +1,15 @@
+use std::net::SocketAddr;
+
 use axum::{
     Router,
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     routing::get,
 };
+use axum_client_ip::ClientIpSource;
 use tower::ServiceBuilder;
 
-use crate::middleware::{extract_user_id, lease_tokens};
+use crate::middleware::{extract_identifier, lease_tokens};
 
 mod bucket;
 mod cfg;
@@ -29,7 +32,7 @@ async fn main() -> Result<()> {
         .route("/check", get(store::handler::check))
         .route_layer(
             ServiceBuilder::new()
-                .layer(from_fn(extract_user_id))
+                .layer(from_fn(extract_identifier))
                 .layer(from_fn_with_state(state.clone(), lease_tokens)),
         );
 
@@ -37,9 +40,19 @@ async fn main() -> Result<()> {
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))
         .route("/config", get(cfg::handler::get))
         .merge(protected)
+        .route_layer(
+            ServiceBuilder::new()
+                .layer(ClientIpSource::XRealIp.into_extension())
+                .layer(ClientIpSource::RightmostForwarded.into_extension())
+                .layer(ClientIpSource::RightmostXForwardedFor.into_extension()),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

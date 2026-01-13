@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    net::Ipv4Addr,
+    net::IpAddr,
     ops::Add,
     time::{Duration, SystemTime},
 };
@@ -10,7 +10,7 @@ use serde_with::{DurationSeconds, serde_as};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum Id {
-    Public(Ipv4Addr),
+    Public(IpAddr),
     Protected(String),
 }
 
