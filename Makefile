@@ -1,4 +1,4 @@
-.PHONY: minikube-up minikube-start minikube-deploy minikube-build dev dev-up dev-down
+.PHONY: minikube-up minikube-start minikube-deploy minikube-build dev dev-up dev-down clippy
 
 minikube-start:
 	@minikube status >/dev/null 2>&1 || minikube start
@@ -20,3 +20,9 @@ dev:
 
 dev-down:
 	docker-compose -f docker-compose.dev.yml down
+
+clippy:
+	cargo fmt && cargo clippy -- \
+	-W clippy::pedantic \
+	-W clippy::nursery \
+	-W clippy::unwrap_used

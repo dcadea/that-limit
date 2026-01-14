@@ -19,11 +19,11 @@ pub enum Error {
 
 pub struct Store {
     store: DashMap<bucket::Id, Bucket>,
-    config: Config,
+    config: Arc<Config>,
 }
 
 impl Store {
-    pub fn new(config: Config) -> Arc<Self> {
+    pub fn new(config: Arc<Config>) -> Arc<Self> {
         let store = DashMap::with_capacity(10000);
 
         // TODO: remove
@@ -44,31 +44,19 @@ impl Store {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
-                tokio::select! {
-                    // _ = async {
-                    //     // TODO: gracefully shutdown
-                    //     // if let Some(rx) = &mut shutdown {
-                    //     //     let _ = rx.await;
-                    //     // } else {
-                    //     //     std::future::pending::<()>().await
-                    //     // }
-                    // } => {
-                    //     println!("Cleanup task received shutdown signal, exiting...");
-                    //     break;
-                    // }
+                // TODO: gracefully shutdown
+                interval.tick().await;
 
-                    _ = interval.tick() => {
-                        let now = SystemTime::now();
-                        let expired: Vec<_> = s_clone.store
-                            .iter()
-                            .filter(|e| e.value().expires_at <= now)
-                            .map(|e| e.key().clone())
-                            .collect();
+                let now = SystemTime::now();
+                let expired: Vec<_> = s_clone
+                    .store
+                    .iter()
+                    .filter(|e| e.value().expires_at <= now)
+                    .map(|e| e.key().clone())
+                    .collect();
 
-                        for key in expired {
-                            s_clone.store.remove(&key);
-                        }
-                    }
+                for key in expired {
+                    s_clone.store.remove(&key);
                 }
             }
         });
@@ -76,8 +64,8 @@ impl Store {
         s
     }
 
-    pub const fn config(&self) -> &Config {
-        &self.config
+    pub fn config(&self) -> Arc<Config> {
+        self.config.clone()
     }
 
     pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: Duration) {
@@ -125,10 +113,7 @@ pub mod handler {
 
     use axum::{Extension, extract::State, http::StatusCode, response::IntoResponse};
 
-    use crate::{
-        bucket,
-        store::{Error, Store},
-    };
+    use crate::{bucket, store::Store};
 
     pub async fn consume(
         b_id: Extension<bucket::Id>,
@@ -146,29 +131,12 @@ pub mod handler {
     pub async fn check(
         Extension(b_id): Extension<bucket::Id>,
         store: State<Arc<Store>>,
-    ) -> impl IntoResponse {
-        let t = store.get_tokens(&b_id);
-
-        match t {
-            Ok(t) => {
-                let response = serde_json::json!({
-                    "user_id": b_id,
-                    "tokens_left": t
-                });
-                (StatusCode::OK, axum::Json(response))
-            }
-            Err(Error::NotFound(b_id)) => {
-                let response = serde_json::json!({
-                    "error": format!("User: {} not found in store", b_id)
-                });
-                (StatusCode::NOT_FOUND, axum::Json(response))
-            }
-            Err(Error::Exhausted(b_id)) => {
-                let response = serde_json::json!({
-                    "error": format!("User: {} consumed all tokens", b_id)
-                });
-                (StatusCode::TOO_MANY_REQUESTS, axum::Json(response))
-            }
-        }
+    ) -> crate::Result<impl IntoResponse> {
+        let t = store.get_tokens(&b_id)?;
+        let response = serde_json::json!({
+            "user_id": b_id,
+            "tokens_left": t
+        });
+        Ok((StatusCode::OK, axum::Json(response)))
     }
 }

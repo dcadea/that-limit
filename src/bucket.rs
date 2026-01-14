@@ -23,7 +23,7 @@ impl Display for Id {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Criteria {
     Sub,
@@ -31,7 +31,7 @@ pub enum Criteria {
 }
 
 #[serde_as]
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Config {
     criteria: Criteria,
     pub quota: u128,

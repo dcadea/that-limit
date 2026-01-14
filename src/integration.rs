@@ -71,6 +71,7 @@ pub mod cache {
 
     impl Default for Config {
         fn default() -> Self {
+            warn!("Fallback to default REDIS config");
             Self {
                 host: String::from("127.0.0.1"),
                 port: 6379,
@@ -160,25 +161,23 @@ pub mod cache {
 
         pub async fn ttl(&self, key: &Key<'_>) -> Result<Duration> {
             let mut con = self.con.clone();
+            trace!("TTL -> {key:?}");
             match con.ttl::<_, i64>(key).await {
                 Ok(ttl) if ttl > 0 => Ok(Duration::from_secs(ttl.cast_unsigned())),
                 Ok(v) => {
                     if v == -1 {
+                        warn!("Key {key:?} has no expiration");
                         Err(Error::NoExpiration(key.to_string()))
                     } else if v == -2 {
+                        warn!("Key {key:?} does not exist");
                         Err(Error::KeyDoesNotExist(key.to_string()))
                     } else {
+                        error!("Invalid TTL: {v} for key {key:?}");
                         Err(Error::Unexpected("Invalid TTL value".to_string()))
                     }
                 }
                 Err(e) => Err(Error::from(e)),
             }
-        }
-
-        pub async fn del(&self, key: &Key<'_>) -> Result<()> {
-            let mut con = self.con.clone();
-            con.del::<_, ()>(&key).await?;
-            Ok(())
         }
     }
 }

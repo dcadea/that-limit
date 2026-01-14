@@ -23,16 +23,7 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-// impl Display for Error {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             Error::Io(err) => write!(f, "IO Error: {}", err),
-//             Error::Json(err) => write!(f, "JSON Error: {}", err),
-//         }
-//     }
-// }
-
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Clone, Deserialize, Debug, Serialize)]
 pub struct Config {
     pub sync_every: u8,
     pub protected: bucket::Config,
@@ -41,23 +32,21 @@ pub struct Config {
 
 pub mod handler {
 
-    use axum::Json;
+    use std::sync::Arc;
 
-    use crate::{cfg::Config, error};
+    use axum::{Json, extract::State};
 
-    pub async fn get() -> Result<Json<Config>, error::Error> {
-        let config = super::get("static/config.json")?;
-        Ok(Json(config))
+    use crate::cfg::Config;
+
+    pub async fn get(config: State<Arc<Config>>) -> Json<Config> {
+        Json(Config::clone(&config))
     }
 }
 
 pub fn get(path: &str) -> Result<Config, Error> {
-    // let content = fs::read_to_string(path).map_err(|err| Error::Io(err))?;
     let content = fs::read_to_string(path)?;
 
-    let config =
-        // serde_json::from_str::<Config>(&content).map_err(|err| Error::Json(err))?;
-        serde_json::from_str::<Config>(&content)?;
+    let config = serde_json::from_str::<Config>(&content)?;
 
     Ok(config)
 }
