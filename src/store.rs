@@ -39,22 +39,23 @@ impl Store {
         let s = Arc::new(Self { store, config });
 
         let s_clone = s.clone();
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
                 tokio::select! {
-                    _ = async {
-                        // TODO: gracefully shutdown
-                        // if let Some(rx) = &mut shutdown {
-                        //     let _ = rx.await;
-                        // } else {
-                        //     std::future::pending::<()>().await
-                        // }
-                    } => {
-                        println!("Cleanup task received shutdown signal, exiting...");
-                        break;
-                    }
+                    // _ = async {
+                    //     // TODO: gracefully shutdown
+                    //     // if let Some(rx) = &mut shutdown {
+                    //     //     let _ = rx.await;
+                    //     // } else {
+                    //     //     std::future::pending::<()>().await
+                    //     // }
+                    // } => {
+                    //     println!("Cleanup task received shutdown signal, exiting...");
+                    //     break;
+                    // }
 
                     _ = interval.tick() => {
                         let now = SystemTime::now();
