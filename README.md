@@ -24,6 +24,8 @@ cargo run           # Run the project
 cargo watch -x run  # Run the project with hot-reload
                     # (req: `cargo install cargo-watch`)
 cargo test          # Run the tests
+
+make clippy         # Run pedantic linter
 ```
 Optionally you can run the project with `cargo run --release` to enable optimizations.<br>
 To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run`.<br>
@@ -51,3 +53,21 @@ This will give you an output with the url you can access to reach the service vi
 | NAMESPACE | NAME          | TARGET PORT | URL                    |
 |-----------|---------------|-------------|------------------------|
 | default   | that-limit-lb |             | http://127.0.0.1:56706 |
+
+### Configuration
+Application will not start without the **required** environment configuration. <br>
+**Optional** variables have default values, but it is highly recommended to override these once you have a working setup.
+- Required environment variables:
+```dotenv
+N/A
+```
+- Optional environment variables:
+```dotenv
+RUST_LOG=info
+
+CFG_PATH=static/config.json
+SERVER_PORT=8000
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+```
