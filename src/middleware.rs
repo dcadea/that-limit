@@ -9,6 +9,7 @@ use axum::{
     response::Response,
 };
 use axum_client_ip::ClientIp;
+use log::debug;
 
 use crate::{
     bucket, error,
@@ -62,6 +63,7 @@ pub async fn lease_tokens(
     let ttl = match tokens {
         Ok(tokens) => {
             let ttl = redis.ttl(&key).await?;
+            debug!("Leasing {} tokens for {}", tokens, b_id);
             redis.set_keep_ttl(&key, tokens - LEASE_SIZE).await?;
             ttl
         }

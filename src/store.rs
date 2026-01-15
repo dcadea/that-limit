@@ -46,6 +46,7 @@ impl Store {
         let s = Arc::new(Self { store, config });
 
         let s_clone = s.clone();
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
