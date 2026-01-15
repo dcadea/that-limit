@@ -122,32 +122,41 @@ impl Store {
 pub mod handler {
     use std::sync::Arc;
 
-    use axum::{Extension, extract::State, http::StatusCode, response::IntoResponse};
+    use axum::{Extension, Json, extract::State};
+    use serde::Serialize;
 
     use crate::{bucket, store::Store};
 
-    pub async fn consume(
-        b_id: Extension<bucket::Id>,
-        store: State<Arc<Store>>,
-    ) -> crate::Result<impl IntoResponse> {
-        let tokens_left = store.consume(&b_id)?;
+    #[derive(Serialize)]
+    pub struct ConsumeResponse {
+        bucket_id: bucket::Id,
+        tokens_left: u64,
+    }
 
-        let response = serde_json::json!({
-            "bucket_id": b_id.0,
-            "tokens_left": tokens_left
-        });
-        Ok(axum::Json(response))
+    pub async fn consume(
+        Extension(bucket_id): Extension<bucket::Id>,
+        store: State<Arc<Store>>,
+    ) -> crate::Result<Json<ConsumeResponse>> {
+        let tokens_left = store.consume(&bucket_id)?;
+
+        Ok(Json(ConsumeResponse {
+            bucket_id,
+            tokens_left,
+        }))
+    }
+
+    #[derive(Serialize)]
+    pub struct CheckResponse {
+        bucket_id: bucket::Id,
+        allowed: bool,
     }
 
     pub async fn check(
-        Extension(b_id): Extension<bucket::Id>,
+        Extension(bucket_id): Extension<bucket::Id>,
         store: State<Arc<Store>>,
-    ) -> crate::Result<impl IntoResponse> {
-        let allowed = store.check(&b_id)?;
-        let response = serde_json::json!({
-            "bucket_id": b_id,
-            "allowed": allowed
-        });
-        Ok((StatusCode::OK, axum::Json(response)))
+    ) -> crate::Result<Json<CheckResponse>> {
+        let allowed = store.check(&bucket_id)?;
+
+        Ok(Json(CheckResponse { bucket_id, allowed }))
     }
 }
