@@ -21,7 +21,7 @@ pub async fn extract_identifier(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
-) -> Result<Response, error::Error> {
+) -> crate::Result<Response> {
     let protected = headers
         .get("user_id")
         .and_then(|id| id.to_str().ok())
@@ -51,8 +51,8 @@ pub async fn lease_tokens(
     redis: State<Redis>,
     request: Request<Body>,
     next: Next,
-) -> Result<Response, error::Error> {
-    if store.check(&b_id) {
+) -> crate::Result<Response> {
+    if store.check(&b_id)? {
         return Ok(next.run(request).await);
     }
 

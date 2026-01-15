@@ -4,17 +4,24 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use dashmap::DashMap;
+use dashmap::{
+    DashMap,
+    try_result::TryResult::{Absent, Locked, Present},
+};
+use log::debug;
 
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
 };
 
+type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug)]
 pub enum Error {
     Exhausted(bucket::Id),
     NotFound(bucket::Id),
+    Locked(bucket::Id),
 }
 
 pub struct Store {
@@ -72,38 +79,42 @@ impl Store {
         self.store.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> Option<u128> {
-        if let Some(mut b) = self.store.get_mut(b_id) {
-            if b.expires_at <= SystemTime::now() {
-                drop(b);
-                self.store.remove(b_id);
-                return None;
-            }
-
-            if b.tokens > 0 {
-                b.tokens -= 1;
-            }
-
-            return Some(b.tokens);
-        }
-
-        None
-    }
-
-    pub fn check(&self, b_id: &bucket::Id) -> bool {
-        self.store.contains_key(b_id)
-    }
-
-    pub fn get_tokens(&self, b_id: &bucket::Id) -> Result<u128, Error> {
-        match self.store.get(b_id) {
-            Some(b) => {
+    pub fn consume(&self, b_id: &bucket::Id) -> Result<u128> {
+        match self.store.try_get_mut(b_id) {
+            Present(mut b) => {
                 if b.expires_at <= SystemTime::now() {
+                    debug!("Bucket {b_id} expired, cleaning up");
+                    drop(b);
+                    self.store.remove(b_id);
+                    return Ok(0);
+                }
+
+                if b.tokens > 0 {
+                    debug!("Consuming token from {b_id}");
+                    b.tokens -= 1;
+                }
+
+                debug!("Tokens for {b_id} left: {}", b.tokens);
+                return Ok(b.tokens);
+            }
+            Absent => Ok(0),
+            Locked => Err(Error::Locked(b_id.clone())),
+        }
+    }
+
+    pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
+        match self.store.try_get(b_id) {
+            Present(b) => {
+                if b.tokens <= 0 {
+                    debug!("Bucket {b_id} is exhausted");
                     return Err(Error::Exhausted(b_id.clone()));
                 }
 
-                Ok(b.tokens)
+                debug!("Tokens for {b_id} left: {}", b.tokens);
+                Ok(true)
             }
-            None => Err(Error::NotFound(b_id.clone())),
+            Absent => Err(Error::NotFound(b_id.clone())),
+            Locked => Err(Error::Locked(b_id.clone())),
         }
     }
 }
@@ -118,24 +129,24 @@ pub mod handler {
     pub async fn consume(
         b_id: Extension<bucket::Id>,
         store: State<Arc<Store>>,
-    ) -> impl IntoResponse {
-        let tokens_left = store.consume(&b_id);
+    ) -> crate::Result<impl IntoResponse> {
+        let tokens_left = store.consume(&b_id)?;
 
         let response = serde_json::json!({
             "bucket_id": b_id.0,
-            "tokens_left": tokens_left.unwrap_or(0)
+            "tokens_left": tokens_left
         });
-        axum::Json(response)
+        Ok(axum::Json(response))
     }
 
     pub async fn check(
         Extension(b_id): Extension<bucket::Id>,
         store: State<Arc<Store>>,
     ) -> crate::Result<impl IntoResponse> {
-        let t = store.get_tokens(&b_id)?;
+        let allowed = store.check(&b_id)?;
         let response = serde_json::json!({
-            "user_id": b_id,
-            "tokens_left": t
+            "bucket_id": b_id,
+            "allowed": allowed
         });
         Ok((StatusCode::OK, axum::Json(response)))
     }
