@@ -13,6 +13,7 @@ use log::debug;
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
+    integration::cache,
 };
 
 type Result<T> = std::result::Result<T, Error>;
@@ -22,28 +23,43 @@ pub enum Error {
     Exhausted(bucket::Id),
     NotFound(bucket::Id),
     Locked(bucket::Id),
+    Cache(cache::Error),
+}
+
+impl From<cache::Error> for Error {
+    fn from(e: cache::Error) -> Self {
+        Self::Cache(e)
+    }
 }
 
 pub struct Store {
-    store: DashMap<bucket::Id, Bucket>,
+    buckets: DashMap<bucket::Id, Bucket>,
     config: Arc<Config>,
+    redis: cache::Redis,
 }
 
+// TODO: make configurable based on number of nodes to not exceed bucket size
+const LEASE_SIZE: u64 = 100;
+
 impl Store {
-    pub fn new(config: Arc<Config>) -> Arc<Self> {
-        let store = DashMap::with_capacity(10000);
+    pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
+        let buckets = DashMap::with_capacity(10000);
 
         // TODO: remove
-        store.insert(
+        buckets.insert(
             bucket::Id::Protected("jora".to_string()),
             Bucket::new(500, Duration::from_secs(3600)),
         );
-        store.insert(
+        buckets.insert(
             bucket::Id::Public(IpAddr::V4(Ipv4Addr::new(10, 20, 30, 40))),
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
-        let s = Arc::new(Self { store, config });
+        let s = Arc::new(Self {
+            buckets,
+            config,
+            redis,
+        });
 
         let s_clone = s.clone();
 
@@ -56,14 +72,14 @@ impl Store {
 
                 let now = SystemTime::now();
                 let expired: Vec<_> = s_clone
-                    .store
+                    .buckets
                     .iter()
                     .filter(|e| e.value().expires_at <= now)
                     .map(|e| e.key().clone())
                     .collect();
 
                 for key in expired {
-                    s_clone.store.remove(&key);
+                    s_clone.buckets.remove(&key);
                 }
             }
         });
@@ -71,21 +87,64 @@ impl Store {
         s
     }
 
-    pub fn config(&self) -> Arc<Config> {
-        self.config.clone()
+    pub async fn lease(&self, b_id: &bucket::Id) -> Result<()> {
+        let key = cache::Key::from(b_id);
+
+        let tokens: cache::Result<u64> = self.redis.get(&key).await;
+
+        let (leased, ttl) = match tokens {
+            Ok(0) => return Err(Error::Exhausted(b_id.clone())),
+            Ok(tokens) => {
+                // calculate how many tokens are leased
+                // and how many tokens are left in bank afterwards
+                let (leased, bank) = if tokens >= LEASE_SIZE {
+                    (LEASE_SIZE, tokens - LEASE_SIZE)
+                } else {
+                    (tokens, 0)
+                };
+
+                let ttl = self.redis.ttl(&key).await?;
+                self.redis.set_keep_ttl(&key, bank).await?;
+                (leased, ttl)
+            }
+
+            Err(cache::Error::NotFound(_)) => {
+                let criteria = match b_id {
+                    bucket::Id::Public(_) => &self.config.public,
+                    bucket::Id::Protected(_) => &self.config.protected,
+                };
+
+                // ideally should never happen, but if will - panic
+                assert!(criteria.quota() > LEASE_SIZE);
+
+                let ttl = criteria.reset_in();
+
+                self.redis
+                    .set_ex(&key, criteria.quota() - LEASE_SIZE, ttl)
+                    .await?;
+
+                (LEASE_SIZE, ttl)
+            }
+
+            Err(e) => return Err(Error::from(e)),
+        };
+
+        self.add(b_id.clone(), leased, ttl);
+        debug!("Leased {} tokens for {}", leased, b_id);
+        Ok(())
     }
 
-    pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: Duration) {
-        self.store.insert(b_id, Bucket::new(tokens, ttl));
+    pub fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
+        self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> Result<u128> {
-        match self.store.try_get_mut(b_id) {
+    fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
+        match self.buckets.try_get_mut(b_id) {
             Present(mut b) => {
                 if b.expires_at <= SystemTime::now() {
                     debug!("Bucket {b_id} expired, cleaning up");
                     drop(b);
-                    self.store.remove(b_id);
+                    self.buckets.remove(b_id);
                     return Ok(0);
                 }
 
@@ -95,7 +154,7 @@ impl Store {
                 }
 
                 debug!("Tokens for {b_id} left: {}", b.tokens);
-                return Ok(b.tokens);
+                Ok(b.tokens)
             }
             Absent => Ok(0),
             Locked => Err(Error::Locked(b_id.clone())),
@@ -103,9 +162,9 @@ impl Store {
     }
 
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
-        match self.store.try_get(b_id) {
+        match self.buckets.try_get(b_id) {
             Present(b) => {
-                if b.tokens <= 0 {
+                if b.tokens == 0 {
                     debug!("Bucket {b_id} is exhausted");
                     return Err(Error::Exhausted(b_id.clone()));
                 }
