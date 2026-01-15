@@ -14,9 +14,8 @@ minikube-up: minikube-start minikube-deploy
 dev-up:
 	docker-compose -f docker-compose.dev.yml up -d
 
-dev:
-	make dev-up
-	cargo watch -x "run" -w src
+dev: dev-up
+	RUST_LOG=trace cargo watch -x "run" -w src
 
 dev-down:
 	docker-compose -f docker-compose.dev.yml down

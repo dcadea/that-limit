@@ -45,9 +45,9 @@ make minikube-start     # Start the minikube
 make minikube-build     # Build a Docker image inside the minikube env
 make minikube-deploy    # Apply changes to create resourses in the cluster
 make minikube-up        # Start-build-deploy in one go
-make dev                # Start Docker services + run Rust app with hot reload
-make dev-up             # Start Docker services in background (redis, etc)
-make dev-down           # Stop and remove Docker services
+make dev                # Start dependencies in Docker + run Rust app with hot reload
+make dev-up             # Start dependencies in Docker (redis, etc)
+make dev-down           # Stop Docker dependencies
 ```
 Additionally you can run `minikube dashboard` to check cluster in web console.
 
