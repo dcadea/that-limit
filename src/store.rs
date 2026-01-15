@@ -74,11 +74,11 @@ impl Store {
         self.config.clone()
     }
 
-    pub fn add(&self, b_id: bucket::Id, tokens: u128, ttl: Duration) {
+    pub fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
         self.store.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> Result<u128> {
+    pub fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
         match self.store.try_get_mut(b_id) {
             Present(mut b) => {
                 if b.expires_at <= SystemTime::now() {
@@ -94,7 +94,7 @@ impl Store {
                 }
 
                 debug!("Tokens for {b_id} left: {}", b.tokens);
-                return Ok(b.tokens);
+                Ok(b.tokens)
             }
             Absent => Ok(0),
             Locked => Err(Error::Locked(b_id.clone())),
@@ -104,7 +104,7 @@ impl Store {
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
         match self.store.try_get(b_id) {
             Present(b) => {
-                if b.tokens <= 0 {
+                if b.tokens == 0 {
                     debug!("Bucket {b_id} is exhausted");
                     return Err(Error::Exhausted(b_id.clone()));
                 }

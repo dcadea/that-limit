@@ -42,7 +42,8 @@ pub async fn extract_identifier(
     }
 }
 
-const LEASE_SIZE: u128 = 100;
+// TODO: make configurable based on number of nodes to not exceed bucket size
+const LEASE_SIZE: u64 = 100;
 
 pub async fn lease_tokens(
     Extension(b_id): Extension<bucket::Id>,
@@ -57,21 +58,27 @@ pub async fn lease_tokens(
 
     let key = cache::Key::from(&b_id);
 
-    let tokens: cache::Result<u128> = redis.get(&key).await;
+    let tokens: cache::Result<u64> = redis.get(&key).await;
 
     let ttl = match tokens {
         Ok(tokens) => {
             let ttl = redis.ttl(&key).await?;
-            redis.set_keep_ttl(&key, tokens - LEASE_SIZE).await?;
+
+            let leased = if tokens >= LEASE_SIZE {
+                tokens - LEASE_SIZE
+            } else {
+                tokens
+            };
+            redis.set_keep_ttl(&key, leased).await?;
             ttl
         }
 
         Err(cache::Error::NotFound(_)) => {
             let cfg = store.config();
-            let ttl = cfg.protected.reset_in;
+            let ttl = cfg.protected.reset_in();
 
             redis
-                .set_ex(&key, cfg.protected.quota - LEASE_SIZE, ttl)
+                .set_ex(&key, cfg.protected.quota() - LEASE_SIZE, ttl)
                 .await?;
 
             ttl

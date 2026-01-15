@@ -5,8 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use serde::{Deserialize, Serialize};
-use serde_with::{DurationSeconds, serde_as};
+use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,30 +23,14 @@ impl Display for Id {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Criteria {
-    Sub,
-    Ip,
-}
-
-#[serde_as]
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct Config {
-    criteria: Criteria,
-    pub quota: u128,
-    #[serde_as(as = "DurationSeconds<u64>")]
-    pub reset_in: Duration,
-}
-
 #[derive(Debug)]
 pub struct Bucket {
-    pub tokens: u128,
+    pub tokens: u64,
     pub expires_at: SystemTime,
 }
 
 impl Bucket {
-    pub fn new(tokens: u128, ttl: Duration) -> Self {
+    pub fn new(tokens: u64, ttl: Duration) -> Self {
         let expires_at = SystemTime::now().add(ttl);
 
         Self { tokens, expires_at }
