@@ -130,7 +130,7 @@ impl Store {
         };
 
         self.add(b_id.clone(), leased, ttl);
-
+        debug!("Leased {} tokens for {}", leased, b_id);
         Ok(())
     }
 
