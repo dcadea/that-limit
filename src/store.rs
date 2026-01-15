@@ -62,6 +62,7 @@ impl Store {
         });
 
         let s_clone = s.clone();
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
