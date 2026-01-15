@@ -47,6 +47,10 @@ impl IntoResponse for Error {
                 store::Error::NotFound(id) => {
                     (StatusCode::NOT_FOUND, format!("Identity: {id} not found"))
                 }
+                store::Error::Locked(id) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Identity: {id} is locked"),
+                ),
             },
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
