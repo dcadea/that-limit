@@ -1,12 +1,11 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
-use crate::{cfg, integration::cache, store};
+use crate::{cfg, store};
 
 #[derive(Debug)]
 pub enum Error {
     Cfg(cfg::Error),
-    Cache(cache::Error),
     Store(store::Error),
     Unauthorized,
     Internal(String),
@@ -15,12 +14,6 @@ pub enum Error {
 impl From<cfg::Error> for Error {
     fn from(e: cfg::Error) -> Self {
         Self::Cfg(e)
-    }
-}
-
-impl From<cache::Error> for Error {
-    fn from(e: cache::Error) -> Self {
-        Self::Cache(e)
     }
 }
 
@@ -50,6 +43,10 @@ impl IntoResponse for Error {
                 store::Error::Locked(id) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Identity: {id} is locked"),
+                ),
+                store::Error::Cache(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error".to_string(),
                 ),
             },
             _ => (

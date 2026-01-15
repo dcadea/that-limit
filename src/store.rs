@@ -13,6 +13,7 @@ use log::debug;
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
+    integration::cache,
 };
 
 type Result<T> = std::result::Result<T, Error>;
@@ -22,15 +23,26 @@ pub enum Error {
     Exhausted(bucket::Id),
     NotFound(bucket::Id),
     Locked(bucket::Id),
+    Cache(cache::Error),
+}
+
+impl From<cache::Error> for Error {
+    fn from(e: cache::Error) -> Self {
+        Self::Cache(e)
+    }
 }
 
 pub struct Store {
     store: DashMap<bucket::Id, Bucket>,
     config: Arc<Config>,
+    redis: cache::Redis,
 }
 
+// TODO: make configurable based on number of nodes to not exceed bucket size
+const LEASE_SIZE: u64 = 100;
+
 impl Store {
-    pub fn new(config: Arc<Config>) -> Arc<Self> {
+    pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
         let store = DashMap::with_capacity(10000);
 
         // TODO: remove
@@ -43,7 +55,11 @@ impl Store {
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
-        let s = Arc::new(Self { store, config });
+        let s = Arc::new(Self {
+            store,
+            config,
+            redis,
+        });
 
         let s_clone = s.clone();
         tokio::spawn(async move {
@@ -70,15 +86,58 @@ impl Store {
         s
     }
 
-    pub fn config(&self) -> Arc<Config> {
-        self.config.clone()
+    pub async fn lease(&self, b_id: &bucket::Id) -> Result<()> {
+        let key = cache::Key::from(b_id);
+
+        let tokens: cache::Result<u64> = self.redis.get(&key).await;
+
+        let (leased, ttl) = match tokens {
+            Ok(tokens) if tokens == 0 => return Err(Error::Exhausted(b_id.clone())),
+            Ok(tokens) => {
+                // calculate how many tokens are leased
+                // and how many tokens are left in bank afterwards
+                let (leased, bank) = if tokens >= LEASE_SIZE {
+                    (LEASE_SIZE, tokens - LEASE_SIZE)
+                } else {
+                    (tokens, 0)
+                };
+
+                let ttl = self.redis.ttl(&key).await?;
+                self.redis.set_keep_ttl(&key, bank).await?;
+                (leased, ttl)
+            }
+
+            Err(cache::Error::NotFound(_)) => {
+                let criteria = match b_id {
+                    bucket::Id::Public(_) => &self.config.public,
+                    bucket::Id::Protected(_) => &self.config.protected,
+                };
+
+                // ideally should never happen, but if will - panic
+                assert!(criteria.quota() > LEASE_SIZE);
+
+                let ttl = criteria.reset_in();
+
+                self.redis
+                    .set_ex(&key, criteria.quota() - LEASE_SIZE, ttl)
+                    .await?;
+
+                (LEASE_SIZE, ttl)
+            }
+
+            Err(e) => return Err(Error::from(e)),
+        };
+
+        self.add(b_id.clone(), leased, ttl);
+
+        Ok(())
     }
 
     pub fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
         self.store.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
+    fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
         match self.store.try_get_mut(b_id) {
             Present(mut b) => {
                 if b.expires_at <= SystemTime::now() {
