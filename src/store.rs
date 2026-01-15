@@ -33,7 +33,7 @@ impl From<cache::Error> for Error {
 }
 
 pub struct Store {
-    store: DashMap<bucket::Id, Bucket>,
+    buckets: DashMap<bucket::Id, Bucket>,
     config: Arc<Config>,
     redis: cache::Redis,
 }
@@ -43,20 +43,20 @@ const LEASE_SIZE: u64 = 100;
 
 impl Store {
     pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
-        let store = DashMap::with_capacity(10000);
+        let buckets = DashMap::with_capacity(10000);
 
         // TODO: remove
-        store.insert(
+        buckets.insert(
             bucket::Id::Protected("jora".to_string()),
             Bucket::new(500, Duration::from_secs(3600)),
         );
-        store.insert(
+        buckets.insert(
             bucket::Id::Public(IpAddr::V4(Ipv4Addr::new(10, 20, 30, 40))),
             Bucket::new(10000, Duration::from_secs(600)),
         );
 
         let s = Arc::new(Self {
-            store,
+            buckets,
             config,
             redis,
         });
@@ -71,14 +71,14 @@ impl Store {
 
                 let now = SystemTime::now();
                 let expired: Vec<_> = s_clone
-                    .store
+                    .buckets
                     .iter()
                     .filter(|e| e.value().expires_at <= now)
                     .map(|e| e.key().clone())
                     .collect();
 
                 for key in expired {
-                    s_clone.store.remove(&key);
+                    s_clone.buckets.remove(&key);
                 }
             }
         });
@@ -92,7 +92,7 @@ impl Store {
         let tokens: cache::Result<u64> = self.redis.get(&key).await;
 
         let (leased, ttl) = match tokens {
-            Ok(tokens) if tokens == 0 => return Err(Error::Exhausted(b_id.clone())),
+            Ok(0) => return Err(Error::Exhausted(b_id.clone())),
             Ok(tokens) => {
                 // calculate how many tokens are leased
                 // and how many tokens are left in bank afterwards
@@ -134,16 +134,16 @@ impl Store {
     }
 
     pub fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
-        self.store.insert(b_id, Bucket::new(tokens, ttl));
+        self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 
     fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
-        match self.store.try_get_mut(b_id) {
+        match self.buckets.try_get_mut(b_id) {
             Present(mut b) => {
                 if b.expires_at <= SystemTime::now() {
                     debug!("Bucket {b_id} expired, cleaning up");
                     drop(b);
-                    self.store.remove(b_id);
+                    self.buckets.remove(b_id);
                     return Ok(0);
                 }
 
@@ -161,7 +161,7 @@ impl Store {
     }
 
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
-        match self.store.try_get(b_id) {
+        match self.buckets.try_get(b_id) {
             Present(b) => {
                 if b.tokens == 0 {
                     debug!("Bucket {b_id} is exhausted");
