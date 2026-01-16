@@ -1,4 +1,4 @@
-.PHONY: minikube-up minikube-start minikube-deploy minikube-build dev dev-up dev-down clippy
+.PHONY: minikube-up minikube-start minikube-deploy minikube-build dev dev-up dev-down clippy cov
 
 minikube-start:
 	@minikube status >/dev/null 2>&1 || minikube start
@@ -25,3 +25,6 @@ clippy:
 	-W clippy::pedantic \
 	-W clippy::nursery \
 	-W clippy::unwrap_used
+
+cov:
+	cargo llvm-cov --open

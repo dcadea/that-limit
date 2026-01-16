@@ -4,7 +4,7 @@ use axum::{
     Router,
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
-    routing::get,
+    routing::{get, post},
 };
 use axum_client_ip::ClientIpSource;
 use log::{LevelFilter, info};
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
 
 fn init_router(s: AppState) -> Router {
     let protected = Router::new()
-        .route("/consume", get(store::handler::consume))
+        .route("/consume", post(store::handler::consume))
         .route("/check", get(store::handler::check))
         .route_layer(
             ServiceBuilder::new()
