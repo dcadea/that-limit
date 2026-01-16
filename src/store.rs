@@ -126,10 +126,7 @@ impl Store {
                 (LEASE_SIZE, ttl)
             }
 
-            Err(e) => {
-                debug!("{e:?}");
-                return Err(Error::from(e));
-            }
+            Err(e) => return Err(Error::from(e)),
         };
 
         self.add(b_id.clone(), leased, ttl);

@@ -48,11 +48,10 @@ pub mod test {
 
     use super::*;
 
-    // if more than one tests are executed at one, each of them
-    // might want to initialize logger.
-
+    /// If more than one tests are executed at once, each of them
+    /// might want to initialize logger.
     fn init_logger() {
-        // ignore error, most likely already initialized by another test
+        // Ignore error, most likely already initialized by another test
         if let Err(_) = TermLogger::init(
             LevelFilter::Debug,
             simplelog::Config::default(),
@@ -63,8 +62,8 @@ pub mod test {
         }
     }
 
-    // wrapper around AppState to keep redis container alive
-    // for the whole duration of the test
+    /// Wrapper around AppState to keep redis container alive
+    /// for the whole duration of the test.
     pub struct State {
         inner: AppState,
         _redis_container: Arc<ContainerAsync<testcontainers_modules::redis::Redis>>,
