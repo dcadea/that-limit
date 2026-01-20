@@ -1,5 +1,4 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -44,16 +43,6 @@ const LEASE_SIZE: u64 = 100;
 impl Store {
     pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
-
-        // TODO: remove
-        buckets.insert(
-            bucket::Id::Protected("jora".to_string()),
-            Bucket::new(500, Duration::from_secs(3600)),
-        );
-        buckets.insert(
-            bucket::Id::Public(IpAddr::V4(Ipv4Addr::new(10, 20, 30, 40))),
-            Bucket::new(10000, Duration::from_secs(600)),
-        );
 
         let s = Arc::new(Self {
             buckets,
