@@ -1,0 +1,23 @@
+/.idea
+/.zed
+
+/target
+/tests
+/k8s
+/docker-volumes
+docker-compose*.yaml
+
+.DS_Store
+.env
+.git/
+.gitignore
+
+Makefile
+README.md
+*.log
+
+# Coverage / llvm-cov
+llvm-cov/
+**/coverage/
+**/*.profraw
+**/*.profdata

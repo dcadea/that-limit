@@ -180,4 +180,15 @@ pub mod cache {
             }
         }
     }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        impl Config {
+            pub fn test(host: String, port: u16) -> Self {
+                Self { host, port }
+            }
+        }
+    }
 }

@@ -38,3 +38,65 @@ impl FromRef<AppState> for Arc<store::Store> {
         s.store.clone()
     }
 }
+
+#[cfg(test)]
+pub mod test {
+
+    use log::LevelFilter;
+    use simplelog::{ColorChoice, TermLogger, TerminalMode};
+    use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
+
+    use super::*;
+
+    /// If more than one tests are executed at once, each of them
+    /// might want to initialize logger.
+    fn init_logger() {
+        // Ignore error, most likely already initialized by another test
+        if let Err(_) = TermLogger::init(
+            LevelFilter::Debug,
+            simplelog::Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ) {
+            // NOOP
+        }
+    }
+
+    /// Wrapper around AppState to keep redis container alive
+    /// for the whole duration of the test.
+    pub struct State {
+        inner: AppState,
+        _redis_container: Arc<ContainerAsync<testcontainers_modules::redis::Redis>>,
+    }
+
+    impl State {
+        pub async fn new() -> Self {
+            init_logger();
+
+            let cfg_path = String::from("tests/fixtures/valid.json");
+            let cfg = Arc::new(cfg::get(&cfg_path).unwrap());
+
+            let rc = testcontainers_modules::redis::Redis::default()
+                .start()
+                .await
+                .map(Arc::new)
+                .unwrap();
+            let host = rc.get_host().await.unwrap().to_string();
+            let port = rc.get_host_port_ipv4(6379).await.unwrap();
+
+            let redis = cache::Config::test(host, port).connect().await;
+
+            Self {
+                inner: AppState {
+                    cfg: cfg.clone(),
+                    store: store::Store::new(cfg, redis),
+                },
+                _redis_container: rc,
+            }
+        }
+
+        pub const fn app_state(&self) -> &AppState {
+            &self.inner
+        }
+    }
+}

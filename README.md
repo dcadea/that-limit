@@ -26,6 +26,7 @@ cargo watch -x run  # Run the project with hot-reload
 cargo test          # Run the tests
 
 make clippy         # Run pedantic linter
+make cov            # Run tests with coverage
 ```
 Optionally you can run the project with `cargo run --release` to enable optimizations.<br>
 To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run`.<br>

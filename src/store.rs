@@ -1,5 +1,4 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -44,16 +43,6 @@ const LEASE_SIZE: u64 = 100;
 impl Store {
     pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
-
-        // TODO: remove
-        buckets.insert(
-            bucket::Id::Protected("jora".to_string()),
-            Bucket::new(500, Duration::from_secs(3600)),
-        );
-        buckets.insert(
-            bucket::Id::Public(IpAddr::V4(Ipv4Addr::new(10, 20, 30, 40))),
-            Bucket::new(10000, Duration::from_secs(600)),
-        );
 
         let s = Arc::new(Self {
             buckets,
@@ -130,7 +119,7 @@ impl Store {
         };
 
         self.add(b_id.clone(), leased, ttl);
-        debug!("Leased {} tokens for {}", leased, b_id);
+        debug!("Leased {leased} tokens for {b_id}");
         Ok(())
     }
 
@@ -172,7 +161,7 @@ impl Store {
                 debug!("Tokens for {b_id} left: {}", b.tokens);
                 Ok(true)
             }
-            Absent => Err(Error::NotFound(b_id.clone())),
+            Absent => Ok(false),
             Locked => Err(Error::Locked(b_id.clone())),
         }
     }
@@ -182,11 +171,12 @@ pub mod handler {
     use std::sync::Arc;
 
     use axum::{Extension, Json, extract::State};
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
 
     use crate::{bucket, store::Store};
 
-    #[derive(Serialize)]
+    #[derive(Serialize, Deserialize)]
+    #[cfg_attr(test, derive(PartialEq, Eq, Debug))]
     pub struct ConsumeResponse {
         bucket_id: bucket::Id,
         tokens_left: u64,
@@ -217,5 +207,70 @@ pub mod handler {
         let allowed = store.check(&bucket_id)?;
 
         Ok(Json(CheckResponse { bucket_id, allowed }))
+    }
+
+    #[cfg(test)]
+    mod test {
+        use axum::{
+            body::Body,
+            http::{self, Request, StatusCode},
+        };
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        use crate::{
+            bucket, init_router,
+            state::test::State,
+            store::handler::{ConsumeResponse, test},
+        };
+
+        #[tokio::test]
+        async fn should_respond_ok_on_consume_authorized() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::OK, response.status());
+
+            let expexted = ConsumeResponse {
+                bucket_id: bucket::Id::Protected("valera".to_string()),
+                tokens_left: 99,
+            };
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+
+            assert_eq!(expexted, actual);
+        }
+
+        #[tokio::test]
+        async fn should_fail_on_consume_unauthorized() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::UNAUTHORIZED, response.status());
+        }
     }
 }

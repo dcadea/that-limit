@@ -24,7 +24,8 @@ impl From<serde_json::Error> for Error {
 }
 
 #[serde_as]
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Quota {
     quota: u64,
     #[serde_as(as = "DurationSeconds<u64>")]
@@ -32,7 +33,8 @@ pub struct Quota {
 }
 
 #[serde_as]
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[serde(tag = "criteria", rename_all = "snake_case")]
 pub enum Criteria {
     Sub(Quota),
@@ -55,7 +57,8 @@ impl Criteria {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Deserialize, Debug, Serialize)]
+#[derive(Clone, Deserialize, Debug, Serialize)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
     pub sync_every: u8,
     pub protected: Criteria,
@@ -86,6 +89,15 @@ pub fn get(path: &str) -> Result<Config, Error> {
 #[cfg(test)]
 mod test {
     use std::time::Duration;
+
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use crate::{init_router, state::test};
 
     use super::*;
 
@@ -123,5 +135,40 @@ mod test {
         assert!(
             matches!(c.unwrap_err(), Error::Json(e) if e.to_string().contains(r#"invalid type: string "600", expected u64"#))
         );
+    }
+
+    #[tokio::test]
+    async fn should_respond_ok_on_get_config() {
+        let ts = test::State::new().await;
+        let app = init_router(ts.app_state().clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(StatusCode::OK, response.status());
+
+        let expected = Config {
+            sync_every: 50,
+            protected: Criteria::Sub(Quota {
+                quota: 10000,
+                reset_in: Duration::from_secs(600),
+            }),
+            public: Criteria::Ip(Quota {
+                quota: 500,
+                reset_in: Duration::from_hours(1),
+            }),
+        };
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let actual: Config = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(expected, actual);
     }
 }
