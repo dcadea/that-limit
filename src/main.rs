@@ -40,13 +40,12 @@ async fn main() -> Result<()> {
 
 fn init_router(s: AppState) -> Router {
     let protected = Router::new()
-        .route("/consume", post(store::handler::consume))
+        .route(
+            "/consume",
+            post(store::handler::consume).layer(from_fn_with_state(s.clone(), lease_tokens)),
+        )
         .route("/check", get(store::handler::check))
-        .route_layer(
-            ServiceBuilder::new()
-                .layer(from_fn(extract_identifier))
-                .layer(from_fn_with_state(s.clone(), lease_tokens)),
-        );
+        .route_layer(from_fn(extract_identifier));
 
     Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))

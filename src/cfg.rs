@@ -65,6 +65,23 @@ pub struct Config {
     pub public: Criteria,
 }
 
+#[cfg(test)]
+impl Config {
+    pub fn test() -> Self {
+        Self {
+            sync_every: 50,
+            protected: Criteria::Sub(Quota {
+                quota: 10000,
+                reset_in: Duration::from_secs(600),
+            }),
+            public: Criteria::Ip(Quota {
+                quota: 500,
+                reset_in: Duration::from_hours(1),
+            }),
+        }
+    }
+}
+
 pub mod handler {
 
     use std::sync::Arc;

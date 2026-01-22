@@ -48,7 +48,7 @@ pub async fn lease_tokens(
         return Ok(next.run(request).await);
     }
 
-    store.lease(&b_id).await?;
+    store.lease(b_id).await?;
 
     Ok(next.run(request).await)
 }
