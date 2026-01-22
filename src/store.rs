@@ -82,6 +82,7 @@ impl Store {
         let tokens: cache::Result<u64> = self.redis.get(&key).await;
 
         let (leased, ttl) = match tokens {
+            // We'll respond with 429 when cannot lease from cache anymore
             Ok(0) => return Err(Error::Exhausted(b_id.clone())),
             Ok(tokens) => {
                 // calculate how many tokens are leased
@@ -155,7 +156,7 @@ impl Store {
             Present(b) => {
                 if b.tokens == 0 {
                     debug!("Bucket {b_id} is exhausted");
-                    return Err(Error::Exhausted(b_id.clone()));
+                    return Ok(false);
                 }
 
                 debug!("Tokens for {b_id} left: {}", b.tokens);
