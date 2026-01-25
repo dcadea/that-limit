@@ -76,14 +76,14 @@ impl Store {
         s
     }
 
-    pub async fn lease(&self, b_id: &bucket::Id) -> Result<()> {
-        let key = cache::Key::from(b_id);
+    pub async fn lease(&self, b_id: bucket::Id) -> Result<()> {
+        let key = cache::Key::from(&b_id);
 
         let tokens: cache::Result<u64> = self.redis.get(&key).await;
 
         let (leased, ttl) = match tokens {
             // We'll respond with 429 when cannot lease from cache anymore
-            Ok(0) => return Err(Error::Exhausted(b_id.clone())),
+            Ok(0) => return Err(Error::Exhausted(b_id)),
             Ok(tokens) => {
                 // calculate how many tokens are leased
                 // and how many tokens are left in bank afterwards
@@ -118,9 +118,8 @@ impl Store {
 
             Err(e) => return Err(Error::from(e)),
         };
-
-        self.add(b_id.clone(), leased, ttl);
-        debug!("Leased {leased} tokens for {b_id}");
+        debug!("Leased {leased} tokens for {b_id:?}");
+        self.add(b_id, leased, ttl);
         Ok(())
     }
 
@@ -195,7 +194,8 @@ pub mod handler {
         }))
     }
 
-    #[derive(Serialize)]
+    #[derive(Serialize, Deserialize)]
+    #[cfg_attr(test, derive(PartialEq, Eq, Debug))]
     pub struct CheckResponse {
         bucket_id: bucket::Id,
         allowed: bool,
@@ -222,7 +222,7 @@ pub mod handler {
         use crate::{
             bucket, init_router,
             state::test::State,
-            store::handler::{ConsumeResponse, test},
+            store::handler::{CheckResponse, ConsumeResponse, test},
         };
 
         #[tokio::test]
@@ -256,6 +256,51 @@ pub mod handler {
         }
 
         #[tokio::test]
+        async fn should_respond_ok_on_subsequent_consume() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            // first call will lease
+            let _ = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            // second call will skip lease and deduct from local store
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::OK, response.status());
+
+            let expexted = ConsumeResponse {
+                bucket_id: bucket::Id::Protected("valera".to_string()),
+                tokens_left: 98,
+            };
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+
+            assert_eq!(expexted, actual);
+        }
+
+        #[tokio::test]
         async fn should_fail_on_consume_unauthorized() {
             let ts = test::State::new().await;
             let app = init_router(ts.app_state().clone());
@@ -272,6 +317,80 @@ pub mod handler {
                 .unwrap();
 
             assert_eq!(StatusCode::UNAUTHORIZED, response.status());
+        }
+
+        #[tokio::test]
+        async fn should_return_allowed_true_on_check() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            // ignore response, this is to lease first batch of tokens
+            let _ = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::GET)
+                        .uri("/check")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::OK, response.status());
+
+            let expexted = CheckResponse {
+                bucket_id: bucket::Id::Protected("valera".to_string()),
+                allowed: true,
+            };
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: CheckResponse = serde_json::from_slice(&body).unwrap();
+
+            assert_eq!(expexted, actual);
+        }
+
+        #[tokio::test]
+        async fn should_return_allowed_false_on_check() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::GET)
+                        .uri("/check")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::OK, response.status());
+
+            let expexted = CheckResponse {
+                bucket_id: bucket::Id::Protected("valera".to_string()),
+                allowed: false,
+            };
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: CheckResponse = serde_json::from_slice(&body).unwrap();
+
+            assert_eq!(expexted, actual);
         }
     }
 }

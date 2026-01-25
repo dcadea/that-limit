@@ -46,6 +46,8 @@ pub mod test {
     use simplelog::{ColorChoice, TermLogger, TerminalMode};
     use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
 
+    use crate::cfg::Config;
+
     use super::*;
 
     /// If more than one tests are executed at once, each of them
@@ -71,10 +73,13 @@ pub mod test {
 
     impl State {
         pub async fn new() -> Self {
+            Self::with_cfg(Config::test()).await
+        }
+
+        pub async fn with_cfg(cfg: Config) -> Self {
             init_logger();
 
-            let cfg_path = String::from("tests/fixtures/valid.json");
-            let cfg = Arc::new(cfg::get(&cfg_path).unwrap());
+            let cfg = Arc::new(cfg);
 
             let rc = testcontainers_modules::redis::Redis::default()
                 .start()
