@@ -8,6 +8,7 @@ use dashmap::{
     try_result::TryResult::{Absent, Locked, Present},
 };
 use log::debug;
+use tokio::sync::watch;
 
 use crate::{
     bucket::{self, Bucket},
@@ -35,6 +36,7 @@ pub struct Store {
     buckets: DashMap<bucket::Id, Bucket>,
     config: Arc<Config>,
     redis: cache::Redis,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 // TODO: make configurable based on number of nodes to not exceed bucket size
@@ -43,11 +45,13 @@ const LEASE_SIZE: u64 = 100;
 impl Store {
     pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         let s = Arc::new(Self {
             buckets,
             config,
             redis,
+            shutdown_tx,
         });
 
         let s_clone = s.clone();
@@ -56,24 +60,35 @@ impl Store {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
-                // TODO: gracefully shutdown
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let now = std::time::SystemTime::now();
+                        let expired: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
 
-                let now = SystemTime::now();
-                let expired: Vec<_> = s_clone
-                    .buckets
-                    .iter()
-                    .filter(|e| e.value().expires_at <= now)
-                    .map(|e| e.key().clone())
-                    .collect();
-
-                for key in expired {
-                    s_clone.buckets.remove(&key);
+                        for key in expired {
+                            s_clone.buckets.remove(&key);
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            log::info!("Background cleanup task shutting down");
+                            break;
+                        }
+                    }
                 }
             }
         });
 
         s
+    }
+
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
     }
 
     pub async fn lease(&self, b_id: bucket::Id) -> Result<()> {

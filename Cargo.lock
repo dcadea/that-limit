@@ -1940,7 +1940,6 @@ dependencies = [
  "axum",
  "axum-client-ip",
  "dashmap",
- "futures-util",
  "http-body-util",
  "log",
  "redis",

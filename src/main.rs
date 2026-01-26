@@ -31,9 +31,9 @@ async fn main() -> Result<()> {
     init_logger();
 
     let s = state::AppState::new().await?;
-    let r = init_router(s);
+    let r = init_router(s.clone());
 
-    start(r).await;
+    start(r, s).await;
 
     Ok(())
 }
@@ -60,7 +60,7 @@ fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
-async fn start(r: Router) {
+async fn start(r: Router, s: AppState) {
     let port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".to_string());
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
         Ok(l) => l,
@@ -69,13 +69,21 @@ async fn start(r: Router) {
 
     info!("Starting on port: {port}");
 
-    if let Err(e) = axum::serve(
+    let server = axum::serve(
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    {
-        panic!("Failed to start application: {e:?}")
+    );
+
+    tokio::select! {
+        res = server => {
+            if let Err(e) = res {
+                panic!("Server error: {e:?}");
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("Shutdown signal received");
+            s.storeCloned().shutdown();
+        }
     }
 }
 
