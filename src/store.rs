@@ -8,7 +8,7 @@ use dashmap::{
     try_result::TryResult::{Absent, Locked, Present},
 };
 use log::debug;
-use tokio::sync::watch;
+use tokio::sync::broadcast::Receiver;
 
 use crate::{
     bucket::{self, Bucket},
@@ -36,26 +36,26 @@ pub struct Store {
     buckets: DashMap<bucket::Id, Bucket>,
     config: Arc<Config>,
     redis: cache::Redis,
-    shutdown_tx: watch::Sender<bool>,
 }
 
 // TODO: make configurable based on number of nodes to not exceed bucket size
 const LEASE_SIZE: u64 = 100;
 
 impl Store {
-    pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
+    pub fn new(
+        config: Arc<Config>,
+        redis: cache::Redis,
+        mut shutdown_rx: Receiver<()>,
+    ) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         let s = Arc::new(Self {
             buckets,
             config,
             redis,
-            shutdown_tx,
         });
 
         let s_clone = s.clone();
-
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -73,22 +73,16 @@ impl Store {
                         for key in expired {
                             s_clone.buckets.remove(&key);
                         }
-                    }
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
-                            log::info!("Background cleanup task shutting down");
-                            break;
-                        }
+                    },
+                    _ = shutdown_rx.recv() => {
+                        log::info!("Store cleanup task shutting down");
+                        break;
                     }
                 }
             }
         });
 
         s
-    }
-
-    pub fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(true);
     }
 
     pub async fn lease(&self, b_id: bucket::Id) -> Result<()> {

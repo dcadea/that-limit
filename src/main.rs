@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, str::FromStr};
+use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 
 use axum::{
     Router,
@@ -9,6 +9,7 @@ use axum::{
 use axum_client_ip::ClientIpSource;
 use log::{LevelFilter, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
+use tokio::{signal, sync::broadcast};
 use tower::ServiceBuilder;
 
 use crate::{
@@ -30,10 +31,23 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 async fn main() -> Result<()> {
     init_logger();
 
-    let s = state::AppState::new().await?;
+    let (shutdown_tx, _) = broadcast::channel::<()>(16);
+
+    let s = state::AppState::new(shutdown_tx.clone()).await?;
+
     let r = init_router(s.clone());
 
-    start(r, s).await;
+    start(r).await;
+
+    // Handle shutdown signals in main to split logic from start function
+    tokio::select! {
+        _ = wait_for_shutdown() => {
+            let _ = shutdown_tx.send(());
+        }
+    }
+
+    // give background tasks time to cleanup
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(())
 }
@@ -60,7 +74,7 @@ fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
-async fn start(r: Router, s: AppState) {
+async fn start(r: Router) {
     let port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".to_string());
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
         Ok(l) => l,
@@ -69,21 +83,13 @@ async fn start(r: Router, s: AppState) {
 
     info!("Starting on port: {port}");
 
-    let server = axum::serve(
+    if let Err(e) = axum::serve(
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
-    );
-
-    tokio::select! {
-        res = server => {
-            if let Err(e) = res {
-                panic!("Server error: {e:?}");
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            log::info!("Shutdown signal received");
-            s.storeCloned().shutdown();
-        }
+    )
+    .await
+    {
+        panic!("Failed to start application: {e:?}")
     }
 }
 
@@ -98,4 +104,34 @@ fn init_logger() {
         ColorChoice::Auto,
     )
     .expect("Failed to initialize logger");
+}
+
+async fn wait_for_shutdown() {
+    #[cfg(unix)]
+    let unix_signal = async {
+        use tokio::signal;
+
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(e) => {
+                log::error!("Failed to listen for SIGTERM: {e}");
+            }
+        }
+    };
+
+    //FIXME: Uncomment when Windows support is added
+    // #[cfg(not(unix))]
+    // let unix_signal = async { futures::future::pending::<()>().await };
+
+    // Wait for either Ctrl-C or SIGTERM
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            log::info!("Ctrl-C received, shutting down...");
+        },
+        _ = unix_signal => {
+            log::info!("SIGTERM received, shutting down...");
+        }
+    }
 }

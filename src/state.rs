@@ -1,6 +1,7 @@
 use std::{env, sync::Arc};
 
 use axum::extract::FromRef;
+use tokio::sync::broadcast::Sender;
 
 use crate::{
     cfg::{self},
@@ -15,19 +16,15 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new() -> crate::Result<Self> {
+    pub async fn new(shutdown_tx: Sender<()>) -> crate::Result<Self> {
         let cfg_path = env::var("CFG_PATH").unwrap_or_else(|_| String::from("static/config.json"));
         let cfg = Arc::new(cfg::get(&cfg_path)?);
         let redis = cache::Config::env().unwrap_or_default().connect().await;
 
         Ok(Self {
             cfg: cfg.clone(),
-            store: store::Store::new(cfg, redis),
+            store: store::Store::new(cfg, redis, shutdown_tx.subscribe()),
         })
-    }
-
-    pub fn storeCloned(&self) -> Arc<store::Store> {
-        self.store.clone()
     }
 }
 
@@ -95,10 +92,12 @@ pub mod test {
 
             let redis = cache::Config::test(host, port).connect().await;
 
+            let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+
             Self {
                 inner: AppState {
                     cfg: cfg.clone(),
-                    store: store::Store::new(cfg, redis),
+                    store: store::Store::new(cfg, redis, shutdown_tx.subscribe()),
                 },
                 _redis_container: rc,
             }
