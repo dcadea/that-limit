@@ -37,11 +37,15 @@ async fn main() -> Result<()> {
 
     let r = init_router(s.clone());
 
-    start(r).await;
+    let server_future = start(r);
 
     // Handle shutdown signals in main to split logic from start function
     tokio::select! {
+        _ = server_future => {
+             log::info!("Server exited normally");
+         }
         _ = wait_for_shutdown() => {
+            log::info!("Shutdown signal received, notifying tasks...");
             let _ = shutdown_tx.send(());
         }
     }
