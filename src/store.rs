@@ -8,6 +8,7 @@ use dashmap::{
     try_result::TryResult::{Absent, Locked, Present},
 };
 use log::debug;
+use tokio::sync::broadcast::Receiver;
 
 use crate::{
     bucket::{self, Bucket},
@@ -41,7 +42,11 @@ pub struct Store {
 const LEASE_SIZE: u64 = 100;
 
 impl Store {
-    pub fn new(config: Arc<Config>, redis: cache::Redis) -> Arc<Self> {
+    pub fn new(
+        config: Arc<Config>,
+        redis: cache::Redis,
+        mut shutdown_rx: Receiver<()>,
+    ) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
 
         let s = Arc::new(Self {
@@ -51,24 +56,28 @@ impl Store {
         });
 
         let s_clone = s.clone();
-
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
-                // TODO: gracefully shutdown
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let now = SystemTime::now();
+                        let expired: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
 
-                let now = SystemTime::now();
-                let expired: Vec<_> = s_clone
-                    .buckets
-                    .iter()
-                    .filter(|e| e.value().expires_at <= now)
-                    .map(|e| e.key().clone())
-                    .collect();
-
-                for key in expired {
-                    s_clone.buckets.remove(&key);
+                        for key in expired {
+                            s_clone.buckets.remove(&key);
+                        }
+                    },
+                    _ = shutdown_rx.recv() => {
+                        log::debug!("Store cleanup task shutting down");
+                        break;
+                    }
                 }
             }
         });
