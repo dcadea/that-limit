@@ -43,8 +43,6 @@ impl FromRef<AppState> for Arc<store::Store> {
 #[cfg(test)]
 pub mod test {
 
-    use log::LevelFilter;
-    use simplelog::{ColorChoice, TermLogger, TerminalMode};
     use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 
     use crate::{cfg::Config, init_test_logger};
