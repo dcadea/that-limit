@@ -45,7 +45,7 @@ pub mod test {
 
     use log::LevelFilter;
     use simplelog::{ColorChoice, TermLogger, TerminalMode};
-    use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
+    use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 
     use crate::cfg::Config;
 
@@ -83,6 +83,7 @@ pub mod test {
             let cfg = Arc::new(cfg);
 
             let rc = testcontainers_modules::redis::Redis::default()
+                .with_tag("7")
                 .start()
                 .await
                 .map(Arc::new)

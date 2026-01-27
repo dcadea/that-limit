@@ -229,9 +229,14 @@ pub mod handler {
         use tower::ServiceExt;
 
         use crate::{
-            bucket, init_router,
+            bucket,
+            cfg::Config,
+            init_router,
             state::test::State,
-            store::handler::{CheckResponse, ConsumeResponse, test},
+            store::{
+                LEASE_SIZE,
+                handler::{CheckResponse, ConsumeResponse, test},
+            },
         };
 
         #[tokio::test]
@@ -400,6 +405,47 @@ pub mod handler {
             let actual: CheckResponse = serde_json::from_slice(&body).unwrap();
 
             assert_eq!(expexted, actual);
+        }
+
+        #[tokio::test]
+        async fn should_return_exhausted_when_no_quota_left() {
+            const QUOTA: u64 = LEASE_SIZE + 1;
+            let ts = test::State::with_cfg(Config::with_quota(QUOTA)).await;
+            let app = init_router(ts.app_state().clone());
+
+            for _ in [0; QUOTA as usize] {
+                let _ = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header("user_id", "valera")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
+        }
+
+        #[tokio::test]
+        async fn should_lease_more_tokens_when_local_bucket_is_empty() {
+            todo!("Implement this test")
         }
     }
 }
