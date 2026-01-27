@@ -43,27 +43,11 @@ impl FromRef<AppState> for Arc<store::Store> {
 #[cfg(test)]
 pub mod test {
 
-    use log::LevelFilter;
-    use simplelog::{ColorChoice, TermLogger, TerminalMode};
     use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
 
-    use crate::cfg::Config;
+    use crate::{cfg::Config, init_test_logger};
 
     use super::*;
-
-    /// If more than one tests are executed at once, each of them
-    /// might want to initialize logger.
-    fn init_logger() {
-        // Ignore error, most likely already initialized by another test
-        if let Err(_) = TermLogger::init(
-            LevelFilter::Debug,
-            simplelog::Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        ) {
-            // NOOP
-        }
-    }
 
     /// Wrapper around AppState to keep redis container alive
     /// for the whole duration of the test.
@@ -78,7 +62,7 @@ pub mod test {
         }
 
         pub async fn with_cfg(cfg: Config) -> Self {
-            init_logger();
+            init_test_logger();
 
             let cfg = Arc::new(cfg);
 
