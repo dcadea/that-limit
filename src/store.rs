@@ -62,7 +62,7 @@ impl Store {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let now = std::time::SystemTime::now();
+                        let now = SystemTime::now();
                         let expired: Vec<_> = s_clone
                             .buckets
                             .iter()
@@ -75,7 +75,7 @@ impl Store {
                         }
                     },
                     _ = shutdown_rx.recv() => {
-                        log::info!("Store cleanup task shutting down");
+                        log::debug!("Store cleanup task shutting down");
                         break;
                     }
                 }

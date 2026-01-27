@@ -31,7 +31,7 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 async fn main() -> Result<()> {
     init_logger();
 
-    let (shutdown_tx, _) = broadcast::channel::<()>(16);
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let s = state::AppState::new(shutdown_tx.clone()).await?;
 
@@ -42,10 +42,11 @@ async fn main() -> Result<()> {
     // Handle shutdown signals in main to split logic from start function
     tokio::select! {
         () = server_future => {
-             log::info!("Server exited normally");
+             log::debug!("Server exited normally");
+
          }
         () = wait_for_shutdown() => {
-            log::info!("Shutdown signal received, notifying tasks...");
+            log::debug!("Shutdown signal received");
             let _ = shutdown_tx.send(());
         }
     }
@@ -132,10 +133,10 @@ async fn wait_for_shutdown() {
     // Wait for either Ctrl-C or SIGTERM
     tokio::select! {
         _ = signal::ctrl_c() => {
-            log::info!("Ctrl-C received, shutting down...");
+            log::debug!("Ctrl-C received, shutting down...");
         },
         () = unix_signal => {
-            log::info!("SIGTERM received, shutting down...");
+            log::debug!("SIGTERM received, shutting down...");
         }
     }
 }
