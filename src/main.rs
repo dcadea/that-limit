@@ -7,9 +7,13 @@ use axum::{
     routing::{get, post},
 };
 use axum_client_ip::ClientIpSource;
-use log::{LevelFilter, info};
+use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
-use tokio::{signal, sync::broadcast};
+use tokio::{
+    signal,
+    sync::broadcast::{self, Sender},
+    time::sleep,
+};
 use tower::ServiceBuilder;
 
 use crate::{
@@ -37,22 +41,7 @@ async fn main() -> Result<()> {
 
     let r = init_router(s.clone());
 
-    let server_future = start(r);
-
-    // Handle shutdown signals in main to split logic from start function
-    tokio::select! {
-        () = server_future => {
-             log::debug!("Server exited normally");
-
-         }
-        () = wait_for_shutdown() => {
-            log::debug!("Shutdown signal received");
-            let _ = shutdown_tx.send(());
-        }
-    }
-
-    // give background tasks time to cleanup
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    start(r, shutdown_tx).await;
 
     Ok(())
 }
@@ -79,7 +68,7 @@ fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
-async fn start(r: Router) {
+async fn start(r: Router, shutdown_tx: Sender<()>) {
     let port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".to_string());
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
         Ok(l) => l,
@@ -92,6 +81,7 @@ async fn start(r: Router) {
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
     .await
     {
         panic!("Failed to start application: {e:?}")
@@ -111,7 +101,7 @@ fn init_logger() {
     .expect("Failed to initialize logger");
 }
 
-async fn wait_for_shutdown() {
+async fn shutdown_signal(shutdown_tx: Sender<()>) {
     #[cfg(unix)]
     let unix_signal = async {
         use tokio::signal;
@@ -121,22 +111,38 @@ async fn wait_for_shutdown() {
                 sigterm.recv().await;
             }
             Err(e) => {
-                log::error!("Failed to listen for SIGTERM: {e}");
+                error!("Failed to listen for SIGTERM: {e}");
             }
         }
     };
 
-    //FIXME: Uncomment when Windows support is added
-    // #[cfg(not(unix))]
-    // let unix_signal = async { futures::future::pending::<()>().await };
-
-    // Wait for either Ctrl-C or SIGTERM
     tokio::select! {
         _ = signal::ctrl_c() => {
-            log::debug!("Ctrl-C received, shutting down...");
+            debug!("Ctrl-C received, shutting down...");
         },
         () = unix_signal => {
-            log::debug!("SIGTERM received, shutting down...");
+            debug!("SIGTERM received, shutting down...");
         }
+    }
+
+    debug!("Shutdown signal received");
+    let _ = shutdown_tx.send(());
+
+    // give background tasks time to cleanup
+    sleep(Duration::from_millis(100)).await;
+}
+
+/// If more than one tests are executed at once, each of them
+/// might want to initialize logger.
+#[cfg(test)]
+fn init_test_logger() {
+    // Ignore error, most likely already initialized by another test
+    if let Err(_) = TermLogger::init(
+        LevelFilter::Debug,
+        simplelog::Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    ) {
+        // NOOP
     }
 }
