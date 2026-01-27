@@ -41,10 +41,10 @@ async fn main() -> Result<()> {
 
     // Handle shutdown signals in main to split logic from start function
     tokio::select! {
-        _ = server_future => {
+        () = server_future => {
              log::info!("Server exited normally");
          }
-        _ = wait_for_shutdown() => {
+        () = wait_for_shutdown() => {
             log::info!("Shutdown signal received, notifying tasks...");
             let _ = shutdown_tx.send(());
         }
@@ -134,7 +134,7 @@ async fn wait_for_shutdown() {
         _ = signal::ctrl_c() => {
             log::info!("Ctrl-C received, shutting down...");
         },
-        _ = unix_signal => {
+        () = unix_signal => {
             log::info!("SIGTERM received, shutting down...");
         }
     }
