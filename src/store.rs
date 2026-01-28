@@ -59,20 +59,51 @@ impl Store {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
+            const CHUNK_SIZE: usize = 200;
+            const MAX_CONCURRENCY: usize = 5;
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
+                        if s_clone.buckets.is_empty() {
+                            continue;
+                        }
+
                         let now = SystemTime::now();
-                        let expired: Vec<_> = s_clone
+
+                        let expired_keys: Vec<_> = s_clone
                             .buckets
                             .iter()
                             .filter(|e| e.value().expires_at <= now)
                             .map(|e| e.key().clone())
                             .collect();
 
-                        for key in expired {
-                            s_clone.buckets.remove(&key);
+                        if expired_keys.is_empty() {
+                            continue;
                         }
+
+                        debug!("Found {} expired buckets to cleanup", expired_keys.len());
+
+                        let chunks: Vec<Vec<_>> = expired_keys
+                            .chunks(CHUNK_SIZE)
+                            .map(|c| c.to_vec())
+                            .collect();
+
+                        let mut handles = Vec::new();
+
+                        for chunk in chunks.into_iter().take(MAX_CONCURRENCY) {
+                            let s_for_task = s_clone.clone();
+                            handles.push(tokio::spawn(async move {
+                                for key in chunk {
+                                    s_for_task.buckets.remove(&key);
+                                }
+                            }));
+                        }
+
+                        for h in handles {
+                            let _ = h.await;
+                        }
+
                     },
                     _ = shutdown_rx.recv() => {
                         log::debug!("Store cleanup task shutting down");

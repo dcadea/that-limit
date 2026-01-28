@@ -31,6 +31,20 @@ mod store;
 
 pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
+// In store background task:
+
+// - On every tick:
+// 1. if buckets are empty -> continue
+// 2. if after collecting expired keys -> empty? -> continue
+// 3. split expired keys in chunks by 200 -> start 5 concurrent tasks ->
+// in each task iterate over a chunk and perform cleanup
+
+// - On shutdown signal:
+// 1. if buckets are empty -> break
+// 2. if after collecting replenish keys -> empty? -> break
+// 3. split replenish keys in chunks by 200 -> start 5 concurrent tasks ->
+// in each task iterate over a chunk and return tokens to redis
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logger();
