@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -7,7 +8,7 @@ use dashmap::{
     DashMap,
     try_result::TryResult::{Absent, Locked, Present},
 };
-use log::debug;
+use log::{debug, error};
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
@@ -52,7 +53,7 @@ impl Store {
         let s = Arc::new(Self {
             buckets,
             config,
-            redis,
+            redis: redis.clone(),
         });
 
         let s_clone = s.clone();
@@ -75,7 +76,26 @@ impl Store {
                         }
                     },
                     _ = shutdown_rx.recv() => {
-                        log::debug!("Store cleanup task shutting down");
+                        debug!("Stop cleanup task and return leased tokens");
+
+                        if s_clone.buckets.is_empty() {
+                            break;
+                        }
+
+                        let replenish: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.value().tokens > 0)
+                            .collect();
+
+                        for e in replenish {
+                            let key = cache::Key::from(e.key());
+                            let tokens_left = e.value().tokens;
+                            if let Err(e) = redis.incr(&key, tokens_left).await {
+                                error!("Could not return left tokens for: {key:?}, {e:?}");
+                            }
+                        }
+
                         break;
                     }
                 }
@@ -94,16 +114,11 @@ impl Store {
             // We'll respond with 429 when cannot lease from cache anymore
             Ok(0) => return Err(Error::Exhausted(b_id)),
             Ok(tokens) => {
-                // calculate how many tokens are leased
-                // and how many tokens are left in bank afterwards
-                let (leased, bank) = if tokens >= LEASE_SIZE {
-                    (LEASE_SIZE, tokens - LEASE_SIZE)
-                } else {
-                    (tokens, 0)
-                };
+                let leased = min(tokens, LEASE_SIZE);
+
+                self.redis.decr(&key, leased).await?;
 
                 let ttl = self.redis.ttl(&key).await?;
-                self.redis.set_keep_ttl(&key, bank).await?;
                 (leased, ttl)
             }
 
