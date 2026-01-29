@@ -245,6 +245,7 @@ pub mod handler {
 
         use crate::{
             bucket, init_router,
+            middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
             state::test::State,
             store::handler::{CheckResponse, ConsumeResponse, test},
         };
@@ -259,7 +260,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -280,6 +281,87 @@ pub mod handler {
         }
 
         #[tokio::test]
+        async fn should_respond_ok_on_consume_public() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let ip_headers = [
+                (FORWARDED, "89.28.75.89"),
+                (X_FORWARDED_FOR, "28.75.89.89"),
+                (X_REAL_IP, "89.75.28.89"),
+                (FORWARDED, "2001:db8::1"),
+                (X_FORWARDED_FOR, "fe80::1"),
+                (X_REAL_IP, "::ffff:192.0.2.128"),
+            ];
+
+            for (h, ip) in ip_headers {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header(h, ip)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(StatusCode::OK, response.status());
+
+                let expexted = ConsumeResponse {
+                    bucket_id: bucket::Id::Public(ip.parse().unwrap()),
+                    tokens_left: 99,
+                };
+
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+
+                assert_eq!(expexted, actual);
+            }
+        }
+
+        #[tokio::test]
+        async fn should_fail_on_consume_public_malformed() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let ip_headers = [
+                (FORWARDED, ""),
+                (X_FORWARDED_FOR, "1.2.3"),
+                (X_REAL_IP, "256.1.1.1"),
+                (FORWARDED, "1.2.3.4 "),
+                (X_FORWARDED_FOR, "01.02.03.04"),
+                (X_REAL_IP, "1..3.4"),
+                (FORWARDED, ":"),
+                (X_FORWARDED_FOR, ":::"),
+                (X_REAL_IP, "2001::db8::1"),
+                (FORWARDED, "2001:dg8::1"),
+                (X_FORWARDED_FOR, "fe80::1%eth0"),
+                (X_REAL_IP, "::ffff:999.1.1.1"),
+                (FORWARDED, "12345::1"),
+            ];
+
+            for (h, ip) in ip_headers {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header(h, ip)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(StatusCode::UNAUTHORIZED, response.status());
+            }
+        }
+
+        #[tokio::test]
         async fn should_respond_ok_on_subsequent_consume() {
             let ts = test::State::new().await;
             let app = init_router(ts.app_state().clone());
@@ -291,7 +373,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -304,7 +386,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -355,7 +437,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -367,7 +449,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::GET)
                         .uri("/check")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -397,7 +479,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::GET)
                         .uri("/check")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
