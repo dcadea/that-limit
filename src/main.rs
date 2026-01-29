@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, str::FromStr, time::Duration};
+use std::{env, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -31,20 +31,6 @@ mod store;
 
 pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
-// In store background task:
-
-// - On every tick:
-// 1. if buckets are empty -> continue
-// 2. if after collecting expired keys -> empty? -> continue
-// 3. split expired keys in chunks by 200 -> start 5 concurrent tasks ->
-// in each task iterate over a chunk and perform cleanup
-
-// - On shutdown signal:
-// 1. if buckets are empty -> break
-// 2. if after collecting replenish keys -> empty? -> break
-// 3. split replenish keys in chunks by 200 -> start 5 concurrent tasks ->
-// in each task iterate over a chunk and return tokens to redis
-
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logger();
@@ -55,7 +41,7 @@ async fn main() -> Result<()> {
 
     let r = init_router(s.clone());
 
-    start(r, shutdown_tx).await;
+    start(r, shutdown_tx, s.store()).await;
 
     Ok(())
 }
@@ -82,7 +68,7 @@ fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
-async fn start(r: Router, shutdown_tx: Sender<()>) {
+async fn start(r: Router, shutdown_tx: Sender<()>, store: Arc<store::Store>) {
     let port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".to_string());
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
         Ok(l) => l,
@@ -95,7 +81,7 @@ async fn start(r: Router, shutdown_tx: Sender<()>) {
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+    .with_graceful_shutdown(shutdown_signal(shutdown_tx, store))
     .await
     {
         panic!("Failed to start application: {e:?}")
@@ -115,7 +101,7 @@ fn init_logger() {
     .expect("Failed to initialize logger");
 }
 
-async fn shutdown_signal(shutdown_tx: Sender<()>) {
+async fn shutdown_signal(shutdown_tx: Sender<()>, store: Arc<store::Store>) {
     #[cfg(unix)]
     let unix_signal = async {
         use tokio::signal;
@@ -141,6 +127,11 @@ async fn shutdown_signal(shutdown_tx: Sender<()>) {
 
     debug!("Shutdown signal received");
     let _ = shutdown_tx.send(());
+
+    match store.drain_to_redis().await {
+        Ok(()) => debug!("Successfully drained buckets back to Redis"),
+        Err(e) => error!("Failed to drain buckets back to Redis: {:?}", e),
+    }
 
     // give background tasks time to cleanup
     sleep(Duration::from_millis(100)).await;

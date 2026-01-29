@@ -1940,6 +1940,7 @@ dependencies = [
  "axum",
  "axum-client-ip",
  "dashmap",
+ "futures",
  "http-body-util",
  "log",
  "redis",
@@ -1949,6 +1950,7 @@ dependencies = [
  "simplelog",
  "testcontainers-modules",
  "tokio",
+ "tokio-stream",
  "tower",
 ]
 

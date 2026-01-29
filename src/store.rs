@@ -13,8 +13,10 @@ use tokio::sync::broadcast::Receiver;
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
+    error,
     integration::cache,
 };
+use futures::{StreamExt, stream::iter};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -40,6 +42,8 @@ pub struct Store {
 
 // TODO: make configurable based on number of nodes to not exceed bucket size
 const LEASE_SIZE: u64 = 100;
+const CHUNK_SIZE: usize = 200;
+const MAX_CONCURRENCY: usize = 5;
 
 impl Store {
     pub fn new(
@@ -58,9 +62,6 @@ impl Store {
         let s_clone = s.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
-
-            const CHUNK_SIZE: usize = 200;
-            const MAX_CONCURRENCY: usize = 5;
 
             loop {
                 tokio::select! {
@@ -204,6 +205,64 @@ impl Store {
             Absent => Ok(false),
             Locked => Err(Error::Locked(b_id.clone())),
         }
+    }
+
+    pub async fn drain_to_redis(&self) -> cache::Result<()> {
+        if self.buckets.is_empty() {
+            return Ok(());
+        }
+
+        let ids: Vec<_> = self.buckets.iter().map(|e| e.key().clone()).collect();
+        let mut actions: Vec<(bucket::Id, u64)> = Vec::new();
+
+        for id in ids {
+            if let Some((_, bucket)) = self.buckets.remove(&id)
+                && bucket.tokens > 0
+            {
+                actions.push((id, bucket.tokens));
+            }
+        }
+
+        if actions.is_empty() {
+            return Ok(());
+        }
+
+        let chunks: Vec<Vec<_>> = actions.chunks(CHUNK_SIZE).map(|c| c.to_vec()).collect();
+
+        let client = self.redis.clone();
+
+        let stream = iter(chunks.into_iter().map(move |chunk| {
+            let client = client.clone();
+            async move {
+                for (id, amount) in chunk {
+                    let key = cache::Key::from(&id);
+                    match client.get::<u64>(&key).await {
+                        Ok(current) => {
+                            let new_value = current + amount;
+                            if let Err(err) = client.set_keep_ttl(&key, new_value).await {
+                                error!(
+                                    "Failed to set new value {} for key {:?}: {:?}",
+                                    new_value, key, err
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to GET value for key {:?} when returning {} tokens: {:?}",
+                                key, amount, err
+                            );
+                        }
+                    }
+                }
+            }
+        }));
+
+        stream
+            .buffer_unordered(MAX_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+
+        Ok(())
     }
 }
 
