@@ -6,7 +6,6 @@ use axum::{
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
 };
-use axum_client_ip::ClientIpSource;
 use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
@@ -17,7 +16,7 @@ use tokio::{
 use tower::ServiceBuilder;
 
 use crate::{
-    middleware::{extract_identifier, lease_tokens},
+    middleware::{extract_identifier, extract_ip, lease_tokens},
     state::AppState,
 };
 
@@ -53,18 +52,16 @@ fn init_router(s: AppState) -> Router {
             post(store::handler::consume).layer(from_fn_with_state(s.clone(), lease_tokens)),
         )
         .route("/check", get(store::handler::check))
-        .route_layer(from_fn(extract_identifier));
+        .route_layer(
+            ServiceBuilder::new()
+                .layer(from_fn(extract_ip))
+                .layer(from_fn(extract_identifier)),
+        );
 
     Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))
         .route("/config", get(cfg::handler::get))
         .merge(protected)
-        .route_layer(
-            ServiceBuilder::new()
-                .layer(ClientIpSource::XRealIp.into_extension())
-                .layer(ClientIpSource::RightmostForwarded.into_extension())
-                .layer(ClientIpSource::RightmostXForwardedFor.into_extension()),
-        )
         .with_state(s)
 }
 
