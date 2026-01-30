@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -7,7 +8,7 @@ use dashmap::{
     DashMap,
     try_result::TryResult::{Absent, Locked, Present},
 };
-use log::debug;
+use log::{debug, error};
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
@@ -56,7 +57,7 @@ impl Store {
         let s = Arc::new(Self {
             buckets,
             config,
-            redis,
+            redis: redis.clone(),
         });
 
         let s_clone = s.clone();
@@ -107,7 +108,26 @@ impl Store {
 
                     },
                     _ = shutdown_rx.recv() => {
-                        log::debug!("Store cleanup task shutting down");
+                        debug!("Stop cleanup task and return leased tokens");
+
+                        if s_clone.buckets.is_empty() {
+                            break;
+                        }
+
+                        let replenish: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.value().tokens > 0)
+                            .collect();
+
+                        for e in replenish {
+                            let key = cache::Key::from(e.key());
+                            let tokens_left = e.value().tokens;
+                            if let Err(e) = redis.incr(&key, tokens_left).await {
+                                error!("Could not return left tokens for: {key:?}, {e:?}");
+                            }
+                        }
+
                         break;
                     }
                 }
@@ -126,16 +146,11 @@ impl Store {
             // We'll respond with 429 when cannot lease from cache anymore
             Ok(0) => return Err(Error::Exhausted(b_id)),
             Ok(tokens) => {
-                // calculate how many tokens are leased
-                // and how many tokens are left in bank afterwards
-                let (leased, bank) = if tokens >= LEASE_SIZE {
-                    (LEASE_SIZE, tokens - LEASE_SIZE)
-                } else {
-                    (tokens, 0)
-                };
+                let leased = min(tokens, LEASE_SIZE);
+
+                self.redis.decr(&key, leased).await?;
 
                 let ttl = self.redis.ttl(&key).await?;
-                self.redis.set_keep_ttl(&key, bank).await?;
                 (leased, ttl)
             }
 
@@ -322,11 +337,9 @@ pub mod handler {
             bucket,
             cfg::Config,
             init_router,
+            middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
             state::test::State,
-            store::{
-                LEASE_SIZE,
-                handler::{CheckResponse, ConsumeResponse, test},
-            },
+            store::handler::{CheckResponse, ConsumeResponse, test},
         };
 
         #[tokio::test]
@@ -339,7 +352,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -360,6 +373,87 @@ pub mod handler {
         }
 
         #[tokio::test]
+        async fn should_respond_ok_on_consume_public() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let ip_headers = [
+                (FORWARDED, "89.28.75.89"),
+                (X_FORWARDED_FOR, "28.75.89.89"),
+                (X_REAL_IP, "89.75.28.89"),
+                (FORWARDED, "2001:db8::1"),
+                (X_FORWARDED_FOR, "fe80::1"),
+                (X_REAL_IP, "::ffff:192.0.2.128"),
+            ];
+
+            for (h, ip) in ip_headers {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header(h, ip)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(StatusCode::OK, response.status());
+
+                let expexted = ConsumeResponse {
+                    bucket_id: bucket::Id::Public(ip.parse().unwrap()),
+                    tokens_left: 99,
+                };
+
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+
+                assert_eq!(expexted, actual);
+            }
+        }
+
+        #[tokio::test]
+        async fn should_fail_on_consume_public_malformed() {
+            let ts = test::State::new().await;
+            let app = init_router(ts.app_state().clone());
+
+            let ip_headers = [
+                (FORWARDED, ""),
+                (X_FORWARDED_FOR, "1.2.3"),
+                (X_REAL_IP, "256.1.1.1"),
+                (FORWARDED, "1.2.3.4 "),
+                (X_FORWARDED_FOR, "01.02.03.04"),
+                (X_REAL_IP, "1..3.4"),
+                (FORWARDED, ":"),
+                (X_FORWARDED_FOR, ":::"),
+                (X_REAL_IP, "2001::db8::1"),
+                (FORWARDED, "2001:dg8::1"),
+                (X_FORWARDED_FOR, "fe80::1%eth0"),
+                (X_REAL_IP, "::ffff:999.1.1.1"),
+                (FORWARDED, "12345::1"),
+            ];
+
+            for (h, ip) in ip_headers {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header(h, ip)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(StatusCode::UNAUTHORIZED, response.status());
+            }
+        }
+
+        #[tokio::test]
         async fn should_respond_ok_on_subsequent_consume() {
             let ts = test::State::new().await;
             let app = init_router(ts.app_state().clone());
@@ -371,7 +465,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -384,7 +478,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -435,7 +529,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::POST)
                         .uri("/consume")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -447,7 +541,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::GET)
                         .uri("/check")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -477,7 +571,7 @@ pub mod handler {
                     Request::builder()
                         .method(http::Method::GET)
                         .uri("/check")
-                        .header("user_id", "valera")
+                        .header(USER_ID, "valera")
                         .body(Body::empty())
                         .unwrap(),
                 )

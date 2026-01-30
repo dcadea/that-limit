@@ -7,7 +7,7 @@ pub mod cache {
     };
 
     use log::{error, trace, warn};
-    use redis::{AsyncCommands, RedisError, SetOptions};
+    use redis::{AsyncCommands, RedisError};
 
     use crate::bucket;
 
@@ -115,21 +115,6 @@ pub mod cache {
     }
 
     impl Redis {
-        pub async fn set_keep_ttl<V>(&self, key: &Key<'_>, value: V) -> Result<()>
-        where
-            V: redis::ToSingleRedisArg + Send + Sync,
-        {
-            trace!("SET with KEEPTTL -> {key:?}");
-            let mut con = self.con.clone();
-            con.set_options::<_, _, ()>(
-                &key,
-                value,
-                SetOptions::default().with_expiration(redis::SetExpiry::KEEPTTL),
-            )
-            .await?;
-            Ok(())
-        }
-
         pub async fn set_ex<V>(&self, key: &Key<'_>, value: V, ttl: Duration) -> Result<()>
         where
             V: redis::ToSingleRedisArg + Send + Sync,
@@ -178,6 +163,20 @@ pub mod cache {
                 }
                 Err(e) => Err(Error::from(e)),
             }
+        }
+
+        pub async fn incr(&self, key: &Key<'_>, delta: u64) -> Result<()> {
+            let mut con = self.con.clone();
+            trace!("INCR -> {key:?}");
+            con.incr::<_, _, u64>(key, delta).await?;
+            Ok(())
+        }
+
+        pub async fn decr(&self, key: &Key<'_>, delta: u64) -> Result<()> {
+            let mut con = self.con.clone();
+            trace!("DECR -> {key:?}");
+            con.decr::<_, _, u64>(key, delta).await?;
+            Ok(())
         }
     }
 
