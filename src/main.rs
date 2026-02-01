@@ -1,22 +1,16 @@
-use std::{
-    env,
-    net::{Shutdown, SocketAddr},
-    str::FromStr,
-    time::Duration,
-};
+use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 
 use axum::{
+    Router,
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
-    Router,
 };
-use log::{debug, error, info, LevelFilter};
+use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
     signal,
     sync::broadcast::{self, Receiver, Sender},
-    time::sleep,
 };
 use tower::ServiceBuilder;
 
@@ -129,11 +123,12 @@ async fn shutdown_signal(shutdown_tx: Sender<Command>, mut shutdown_rx: Receiver
     }
 
     debug!("Shutdown signal received");
+    
     let _ = shutdown_tx.send(Command::Shutdown);
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
 
-   loop {
+    loop {
         tokio::select! {
             _ = interval.tick() => {},
             Ok(Command::CleanupComplete) = shutdown_rx.recv() => {
