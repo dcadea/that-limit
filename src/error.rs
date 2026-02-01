@@ -1,26 +1,17 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
+use log::debug;
 use serde::Serialize;
 
 use crate::{cfg, store};
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
-    Cfg(cfg::Error),
-    Store(store::Error),
+    #[error(transparent)]
+    Cfg(#[from] cfg::Error),
+    #[error(transparent)]
+    Store(#[from] store::Error),
+    #[error("Unauthorized")]
     Unauthorized,
-    Internal(String),
-}
-
-impl From<cfg::Error> for Error {
-    fn from(e: cfg::Error) -> Self {
-        Self::Cfg(e)
-    }
-}
-
-impl From<store::Error> for Error {
-    fn from(e: store::Error) -> Self {
-        Self::Store(e)
-    }
 }
 
 #[derive(Serialize)]
@@ -30,6 +21,8 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
+        debug!("Mapping error to HTTP response: {self:?}");
+
         let (status, error_message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             Self::Store(e) => match e {
@@ -37,9 +30,6 @@ impl IntoResponse for Error {
                     StatusCode::TOO_MANY_REQUESTS,
                     format!("Identity: {id} consumed all tokens"),
                 ),
-                store::Error::NotFound(id) => {
-                    (StatusCode::NOT_FOUND, format!("Identity: {id} not found"))
-                }
                 store::Error::Locked(id) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Identity: {id} is locked"),
@@ -49,7 +39,7 @@ impl IntoResponse for Error {
                     "Internal Server Error".to_string(),
                 ),
             },
-            _ => (
+            Self::Cfg(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_string(),
             ),

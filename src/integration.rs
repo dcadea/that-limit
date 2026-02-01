@@ -19,19 +19,18 @@ pub mod cache {
 
     pub type Result<T> = std::result::Result<T, Error>;
 
-    #[derive(Debug)]
+    #[derive(thiserror::Error, Debug)]
     pub enum Error {
-        Redis(RedisError),
+        #[error("Redis error occurred: {0}")]
+        Redis(#[from] RedisError),
+        #[error("Key {0} does not exist")]
         KeyDoesNotExist(String),
+        #[error("Key {0} does not have expiration")]
         NoExpiration(String),
+        #[error("Unexpected redis error: {0}")]
         Unexpected(String),
+        #[error("Key {0} not found")]
         NotFound(String),
-    }
-
-    impl From<RedisError> for Error {
-        fn from(e: RedisError) -> Self {
-            Self::Redis(e)
-        }
     }
 
     #[derive(Clone, Debug)]

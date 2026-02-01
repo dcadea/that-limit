@@ -123,7 +123,7 @@ async fn shutdown_signal(shutdown_tx: Sender<Command>, mut shutdown_rx: Receiver
     }
 
     debug!("Shutdown signal received");
-    
+
     let _ = shutdown_tx.send(Command::Shutdown);
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
