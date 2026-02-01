@@ -9,15 +9,14 @@ use dashmap::{
     try_result::TryResult::{Absent, Locked, Present},
 };
 use log::{debug, error};
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::Sender;
 
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
-    error,
-    integration::cache,
+    integration::{Command, cache},
 };
-use futures::{StreamExt, stream::iter};
+use futures::future::join_all;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -50,9 +49,10 @@ impl Store {
     pub fn new(
         config: Arc<Config>,
         redis: cache::Redis,
-        mut shutdown_rx: Receiver<()>,
+        shutdown_tx: Sender<Command>,
     ) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
+        let mut shutdown_rx = shutdown_tx.subscribe();
 
         let s = Arc::new(Self {
             buckets,
@@ -61,11 +61,51 @@ impl Store {
         });
 
         let s_clone = s.clone();
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
                 tokio::select! {
+                    Ok(Command::Shutdown) = shutdown_rx.recv() => {
+                        debug!("Stop cleanup task and return leased tokens");
+
+                        if s_clone.buckets.is_empty() {
+                            break;
+                        }
+
+                        let replenish: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.tokens > 0)
+                            .filter(|e| e.expires_at > SystemTime::now())
+                            .map(|e| (e.key().clone(), e.value().tokens))
+                            .collect();
+
+                        if replenish.is_empty() {
+                            break;
+                        }
+
+                        let chunks = replenish
+                            .chunks(CHUNK_SIZE)
+                            .map(|chunk| {
+                                let redis = redis.clone();
+
+                                async move {
+                                    for (key, tokens_left) in chunk {
+                                        let key = cache::Key::from(key);
+                                        if let Err(e) = redis.incr(&key, *tokens_left).await {
+                                            error!("Could not return left tokens for: {key:?}, {e:?}");
+                                        }
+                                    }
+                                }
+
+                            });
+
+                        join_all(chunks).await;
+
+                        break;
+                    },
                     _ = interval.tick() => {
                         if s_clone.buckets.is_empty() {
                             continue;
@@ -91,46 +131,29 @@ impl Store {
                             .map(|c| c.to_vec())
                             .collect();
 
-                        let mut handles = Vec::new();
+                        // let mut handles = Vec::new();
+
+                        // FIXME: Use collection, etc as below
+
+                        let handles = chunks.
 
                         for chunk in chunks.into_iter().take(MAX_CONCURRENCY) {
                             let s_for_task = s_clone.clone();
-                            handles.push(tokio::spawn(async move {
+                            handles.push(async move {
                                 for key in chunk {
                                     s_for_task.buckets.remove(&key);
                                 }
-                            }));
+                            });
                         }
 
-                        for h in handles {
-                            let _ = h.await;
-                        }
+                        join_all(handles).await;
 
                     },
-                    _ = shutdown_rx.recv() => {
-                        debug!("Stop cleanup task and return leased tokens");
-
-                        if s_clone.buckets.is_empty() {
-                            break;
-                        }
-
-                        let replenish: Vec<_> = s_clone
-                            .buckets
-                            .iter()
-                            .filter(|e| e.value().tokens > 0)
-                            .collect();
-
-                        for e in replenish {
-                            let key = cache::Key::from(e.key());
-                            let tokens_left = e.value().tokens;
-                            if let Err(e) = redis.incr(&key, tokens_left).await {
-                                error!("Could not return left tokens for: {key:?}, {e:?}");
-                            }
-                        }
-
-                        break;
-                    }
                 }
+            }
+
+            if let Err(e) = shutdown_tx.send(Command::CleanupComplete) {
+                error!("Failed to send CleanupComplete event, {e:?}");
             }
         });
 
@@ -221,64 +244,6 @@ impl Store {
             Locked => Err(Error::Locked(b_id.clone())),
         }
     }
-
-    pub async fn drain_to_redis(&self) -> cache::Result<()> {
-        if self.buckets.is_empty() {
-            return Ok(());
-        }
-
-        let ids: Vec<_> = self.buckets.iter().map(|e| e.key().clone()).collect();
-        let mut actions: Vec<(bucket::Id, u64)> = Vec::new();
-
-        for id in ids {
-            if let Some((_, bucket)) = self.buckets.remove(&id)
-                && bucket.tokens > 0
-            {
-                actions.push((id, bucket.tokens));
-            }
-        }
-
-        if actions.is_empty() {
-            return Ok(());
-        }
-
-        let chunks: Vec<Vec<_>> = actions.chunks(CHUNK_SIZE).map(|c| c.to_vec()).collect();
-
-        let client = self.redis.clone();
-
-        let stream = iter(chunks.into_iter().map(move |chunk| {
-            let client = client.clone();
-            async move {
-                for (id, amount) in chunk {
-                    let key = cache::Key::from(&id);
-                    match client.get::<u64>(&key).await {
-                        Ok(current) => {
-                            let new_value = current + amount;
-                            if let Err(err) = client.set_keep_ttl(&key, new_value).await {
-                                error!(
-                                    "Failed to set new value {} for key {:?}: {:?}",
-                                    new_value, key, err
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            error!(
-                                "Failed to GET value for key {:?} when returning {} tokens: {:?}",
-                                key, amount, err
-                            );
-                        }
-                    }
-                }
-            }
-        }));
-
-        stream
-            .buffer_unordered(MAX_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
-
-        Ok(())
-    }
 }
 
 pub mod handler {
@@ -339,7 +304,10 @@ pub mod handler {
             init_router,
             middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
             state::test::State,
-            store::handler::{CheckResponse, ConsumeResponse, test},
+            store::{
+                LEASE_SIZE,
+                handler::{CheckResponse, ConsumeResponse, test},
+            },
         };
 
         #[tokio::test]

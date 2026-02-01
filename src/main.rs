@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    env,
+    net::{Shutdown, SocketAddr},
+    str::FromStr,
+    time::Duration,
+};
 
 use axum::{
     Router,
@@ -10,12 +15,13 @@ use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
     signal,
-    sync::broadcast::{self, Sender},
+    sync::broadcast::{self, Receiver, Sender},
     time::sleep,
 };
 use tower::ServiceBuilder;
 
 use crate::{
+    integration::Command,
     middleware::{extract_identifier, extract_ip, lease_tokens},
     state::AppState,
 };
@@ -34,13 +40,13 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 async fn main() -> Result<()> {
     init_logger();
 
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let (shutdown_tx, shutdown_rx) = broadcast::channel::<Command>(10);
 
     let s = state::AppState::new(shutdown_tx.clone()).await?;
 
     let r = init_router(s.clone());
 
-    start(r, shutdown_tx, s.store()).await;
+    start(r, shutdown_tx, shutdown_rx).await;
 
     Ok(())
 }
@@ -65,7 +71,7 @@ fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
-async fn start(r: Router, shutdown_tx: Sender<()>, store: Arc<store::Store>) {
+async fn start(r: Router, shutdown_tx: Sender<Command>, shutdown_rx: Receiver<Command>) {
     let port = env::var("SERVER_PORT").unwrap_or_else(|_| "8000".to_string());
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
         Ok(l) => l,
@@ -78,7 +84,7 @@ async fn start(r: Router, shutdown_tx: Sender<()>, store: Arc<store::Store>) {
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal(shutdown_tx, store))
+    .with_graceful_shutdown(shutdown_signal(shutdown_tx, shutdown_rx))
     .await
     {
         panic!("Failed to start application: {e:?}")
