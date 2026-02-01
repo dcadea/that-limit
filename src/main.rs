@@ -6,12 +6,12 @@ use std::{
 };
 
 use axum::{
-    Router,
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
+    Router,
 };
-use log::{LevelFilter, debug, error, info};
+use log::{debug, error, info, LevelFilter};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
     signal,
@@ -104,7 +104,7 @@ fn init_logger() {
     .expect("Failed to initialize logger");
 }
 
-async fn shutdown_signal(shutdown_tx: Sender<()>, store: Arc<store::Store>) {
+async fn shutdown_signal(shutdown_tx: Sender<Command>, mut shutdown_rx: Receiver<Command>) {
     #[cfg(unix)]
     let unix_signal = async {
         use tokio::signal;
@@ -129,15 +129,19 @@ async fn shutdown_signal(shutdown_tx: Sender<()>, store: Arc<store::Store>) {
     }
 
     debug!("Shutdown signal received");
-    let _ = shutdown_tx.send(());
+    let _ = shutdown_tx.send(Command::Shutdown);
 
-    match store.drain_to_redis().await {
-        Ok(()) => debug!("Successfully drained buckets back to Redis"),
-        Err(e) => error!("Failed to drain buckets back to Redis: {:?}", e),
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+
+   loop {
+        tokio::select! {
+            _ = interval.tick() => {},
+            Ok(Command::CleanupComplete) = shutdown_rx.recv() => {
+                debug!("CleanupComplete");
+                break;
+            }
+        }
     }
-
-    // give background tasks time to cleanup
-    sleep(Duration::from_millis(100)).await;
 }
 
 /// If more than one tests are executed at once, each of them

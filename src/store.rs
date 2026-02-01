@@ -131,20 +131,17 @@ impl Store {
                             .map(|c| c.to_vec())
                             .collect();
 
-                        // let mut handles = Vec::new();
-
-                        // FIXME: Use collection, etc as below
-
-                        let handles = chunks.
-
-                        for chunk in chunks.into_iter().take(MAX_CONCURRENCY) {
+                        let handles = chunks
+                        .into_iter()
+                        .take(MAX_CONCURRENCY)
+                        .map(|chunk| {
                             let s_for_task = s_clone.clone();
-                            handles.push(async move {
+                            async move {
                                 for key in chunk {
                                     s_for_task.buckets.remove(&key);
                                 }
-                            });
-                        }
+                            }
+                        });
 
                         join_all(handles).await;
 
