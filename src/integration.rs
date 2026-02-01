@@ -1,3 +1,9 @@
+#[derive(Clone, Debug)]
+pub enum Command {
+    Shutdown,
+    CleanupComplete,
+}
+
 pub mod cache {
     use std::{
         env,

@@ -80,6 +80,20 @@ impl Config {
             }),
         }
     }
+
+    pub fn with_quota(quota: u64) -> Self {
+        Self {
+            sync_every: 50,
+            protected: Criteria::Sub(Quota {
+                quota,
+                reset_in: Duration::from_secs(600),
+            }),
+            public: Criteria::Ip(Quota {
+                quota,
+                reset_in: Duration::from_hours(1),
+            }),
+        }
+    }
 }
 
 pub mod handler {

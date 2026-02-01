@@ -9,13 +9,14 @@ use dashmap::{
     try_result::TryResult::{Absent, Locked, Present},
 };
 use log::{debug, error};
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::Sender;
 
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
-    integration::cache,
+    integration::{Command, cache},
 };
+use futures::future::join_all;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -41,14 +42,17 @@ pub struct Store {
 
 // TODO: make configurable based on number of nodes to not exceed bucket size
 const LEASE_SIZE: u64 = 100;
+const CHUNK_SIZE: usize = 200;
+const MAX_CONCURRENCY: usize = 5;
 
 impl Store {
     pub fn new(
         config: Arc<Config>,
         redis: cache::Redis,
-        mut shutdown_rx: Receiver<()>,
+        shutdown_tx: Sender<Command>,
     ) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
+        let mut shutdown_rx = shutdown_tx.subscribe();
 
         let s = Arc::new(Self {
             buckets,
@@ -57,25 +61,13 @@ impl Store {
         });
 
         let s_clone = s.clone();
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
 
             loop {
                 tokio::select! {
-                    _ = interval.tick() => {
-                        let now = SystemTime::now();
-                        let expired: Vec<_> = s_clone
-                            .buckets
-                            .iter()
-                            .filter(|e| e.value().expires_at <= now)
-                            .map(|e| e.key().clone())
-                            .collect();
-
-                        for key in expired {
-                            s_clone.buckets.remove(&key);
-                        }
-                    },
-                    _ = shutdown_rx.recv() => {
+                    Ok(Command::Shutdown) = shutdown_rx.recv() => {
                         debug!("Stop cleanup task and return leased tokens");
 
                         if s_clone.buckets.is_empty() {
@@ -85,20 +77,86 @@ impl Store {
                         let replenish: Vec<_> = s_clone
                             .buckets
                             .iter()
-                            .filter(|e| e.value().tokens > 0)
+                            .filter(|e| e.tokens > 0)
+                            .filter(|e| e.expires_at > SystemTime::now())
+                            .map(|e| (e.key().clone(), e.value().tokens))
                             .collect();
 
-                        for e in replenish {
-                            let key = cache::Key::from(e.key());
-                            let tokens_left = e.value().tokens;
-                            if let Err(e) = redis.incr(&key, tokens_left).await {
-                                error!("Could not return left tokens for: {key:?}, {e:?}");
-                            }
+                        if replenish.is_empty() {
+                            break;
                         }
 
+                        debug!("# of buckets that should return leased tokens: {}", replenish.len());
+
+
+                        let chunks = replenish
+                            .chunks(CHUNK_SIZE)
+                            .map(|chunk| {
+                                let redis = redis.clone();
+
+                                async move {
+                                    for (key, tokens_left) in chunk {
+                                        let key = cache::Key::from(key);
+                                        if let Err(e) = redis.incr(&key, *tokens_left).await {
+                                            error!("Could not return left tokens for: {key:?}, {e:?}");
+                                        }
+                                    }
+                                }
+
+                            });
+
+                        join_all(chunks).await;
+
                         break;
-                    }
+                    },
+                    _ = interval.tick() => {
+                        if s_clone.buckets.is_empty() {
+                            continue;
+
+                        }
+
+                        debug!("Cleanup tick");
+
+                        let now = SystemTime::now();
+
+                        let expired_keys: Vec<_> = s_clone
+                            .buckets
+                            .iter()
+                            .filter(|e| e.value().expires_at <= now)
+                            .map(|e| e.key().clone())
+                            .collect();
+
+                        if expired_keys.is_empty() {
+                            continue;
+                        }
+
+                        debug!("Found {} expired buckets to cleanup", expired_keys.len());
+
+                        let chunks: Vec<Vec<_>> = expired_keys
+                            .chunks(CHUNK_SIZE)
+                            .map(|c| c.to_vec())
+                            .collect();
+
+                        let handles = chunks
+                        .into_iter()
+                        .take(MAX_CONCURRENCY)
+                        .map(|chunk| {
+                            let s_for_task = s_clone.clone();
+                            async move {
+                                for key in chunk {
+                                    s_for_task.buckets.remove(&key);
+                                }
+                            }
+                        });
+
+                        join_all(handles).await;
+
+                    },
                 }
+            }
+
+            if let Err(e) = shutdown_tx.send(Command::CleanupComplete) {
+                error!("Failed to send CleanupComplete event, {e:?}");
             }
         });
 
@@ -244,10 +302,15 @@ pub mod handler {
         use tower::ServiceExt;
 
         use crate::{
-            bucket, init_router,
+            bucket,
+            cfg::Config,
+            init_router,
             middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
             state::test::State,
-            store::handler::{CheckResponse, ConsumeResponse, test},
+            store::{
+                LEASE_SIZE,
+                handler::{CheckResponse, ConsumeResponse, test},
+            },
         };
 
         #[tokio::test]
@@ -497,6 +560,42 @@ pub mod handler {
             let actual: CheckResponse = serde_json::from_slice(&body).unwrap();
 
             assert_eq!(expexted, actual);
+        }
+
+        #[tokio::test]
+        async fn should_return_exhausted_when_no_quota_left() {
+            const QUOTA: u64 = LEASE_SIZE + 1;
+            let ts = test::State::with_cfg(Config::with_quota(QUOTA)).await;
+            let app = init_router(ts.app_state().clone());
+
+            for _ in [0; QUOTA as usize] {
+                let _ = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(http::Method::POST)
+                            .uri("/consume")
+                            .header("user_id", "valera")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
         }
     }
 }

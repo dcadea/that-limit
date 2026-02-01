@@ -5,7 +5,7 @@ use tokio::sync::broadcast::Sender;
 
 use crate::{
     cfg::{self},
-    integration::cache,
+    integration::{Command, cache},
     store,
 };
 
@@ -16,14 +16,14 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(shutdown_tx: Sender<()>) -> crate::Result<Self> {
+    pub async fn new(shutdown_tx: Sender<Command>) -> crate::Result<Self> {
         let cfg_path = env::var("CFG_PATH").unwrap_or_else(|_| String::from("static/config.json"));
         let cfg = Arc::new(cfg::get(&cfg_path)?);
         let redis = cache::Config::env().unwrap_or_default().connect().await;
 
         Ok(Self {
             cfg: cfg.clone(),
-            store: store::Store::new(cfg, redis, shutdown_tx.subscribe()),
+            store: store::Store::new(cfg, redis, shutdown_tx),
         })
     }
 }
@@ -43,7 +43,7 @@ impl FromRef<AppState> for Arc<store::Store> {
 #[cfg(test)]
 pub mod test {
 
-    use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
+    use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 
     use crate::{cfg::Config, init_test_logger};
 
@@ -67,6 +67,7 @@ pub mod test {
             let cfg = Arc::new(cfg);
 
             let rc = testcontainers_modules::redis::Redis::default()
+                .with_tag("7")
                 .start()
                 .await
                 .map(Arc::new)
@@ -76,12 +77,12 @@ pub mod test {
 
             let redis = cache::Config::test(host, port).connect().await;
 
-            let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+            let (shutdown_tx, _) = tokio::sync::broadcast::channel::<Command>(1);
 
             Self {
                 inner: AppState {
                     cfg: cfg.clone(),
-                    store: store::Store::new(cfg, redis, shutdown_tx.subscribe()),
+                    store: store::Store::new(cfg, redis, shutdown_tx),
                 },
                 _redis_container: rc,
             }
