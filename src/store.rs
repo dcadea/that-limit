@@ -83,10 +83,10 @@ impl Store {
                             .collect();
 
                         if replenish.is_empty() {
-                            debug!("# of buckets that should return leased tokens: {}", replenish.len());
                             break;
                         }
 
+                        debug!("# of buckets that should return leased tokens: {}", replenish.len());
 
 
                         let chunks = replenish
@@ -111,10 +111,11 @@ impl Store {
                     },
                     _ = interval.tick() => {
                         if s_clone.buckets.is_empty() {
-                            debug!("Cleanup tick");
                             continue;
 
                         }
+
+                        debug!("Cleanup tick");
 
                         let now = SystemTime::now();
 
@@ -596,6 +597,5 @@ pub mod handler {
 
             assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
         }
-
     }
 }
