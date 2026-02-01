@@ -83,8 +83,11 @@ impl Store {
                             .collect();
 
                         if replenish.is_empty() {
+                            debug!("# of buckets that should return leased tokens: {}", replenish.len());
                             break;
                         }
+
+
 
                         let chunks = replenish
                             .chunks(CHUNK_SIZE)
@@ -108,7 +111,9 @@ impl Store {
                     },
                     _ = interval.tick() => {
                         if s_clone.buckets.is_empty() {
+                            debug!("Cleanup tick");
                             continue;
+
                         }
 
                         let now = SystemTime::now();
@@ -592,9 +597,5 @@ pub mod handler {
             assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
         }
 
-        #[tokio::test]
-        async fn should_lease_more_tokens_when_local_bucket_is_empty() {
-            todo!("Implement this test")
-        }
     }
 }

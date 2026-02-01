@@ -1912,7 +1912,6 @@ dependencies = [
  "simplelog",
  "testcontainers-modules",
  "tokio",
- "tokio-stream",
  "tower",
 ]
 

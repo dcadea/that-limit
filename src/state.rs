@@ -26,10 +26,6 @@ impl AppState {
             store: store::Store::new(cfg, redis, shutdown_tx),
         })
     }
-
-    pub fn store(&self) -> Arc<store::Store> {
-        self.store.clone()
-    }
 }
 
 impl FromRef<AppState> for Arc<cfg::Config> {

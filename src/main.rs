@@ -132,7 +132,7 @@ async fn shutdown_signal(shutdown_tx: Sender<Command>, mut shutdown_rx: Receiver
         tokio::select! {
             _ = interval.tick() => {},
             Ok(Command::CleanupComplete) = shutdown_rx.recv() => {
-                debug!("CleanupComplete");
+                debug!("Cleanup complete, stopping application");
                 break;
             }
         }
