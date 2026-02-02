@@ -20,18 +20,14 @@ use futures::future::join_all;
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Bucket {0} is exhausted")]
     Exhausted(bucket::Id),
-    NotFound(bucket::Id),
+    #[error("Bucket {0} is locked, too many concurrent calls")]
     Locked(bucket::Id),
-    Cache(cache::Error),
-}
-
-impl From<cache::Error> for Error {
-    fn from(e: cache::Error) -> Self {
-        Self::Cache(e)
-    }
+    #[error(transparent)]
+    Cache(#[from] cache::Error),
 }
 
 pub struct Store {
@@ -43,7 +39,6 @@ pub struct Store {
 // TODO: make configurable based on number of nodes to not exceed bucket size
 const LEASE_SIZE: u64 = 100;
 const CHUNK_SIZE: usize = 200;
-const MAX_CONCURRENCY: usize = 5;
 
 impl Store {
     pub fn new(
@@ -74,11 +69,12 @@ impl Store {
                             break;
                         }
 
+                        let now = SystemTime::now();
                         let replenish: Vec<_> = s_clone
                             .buckets
                             .iter()
                             .filter(|e| e.tokens > 0)
-                            .filter(|e| e.expires_at > SystemTime::now())
+                            .filter(|e| e.expires_at > now)
                             .map(|e| (e.key().clone(), e.value().tokens))
                             .collect();
 
@@ -87,7 +83,6 @@ impl Store {
                         }
 
                         debug!("# of buckets that should return leased tokens: {}", replenish.len());
-
 
                         let chunks = replenish
                             .chunks(CHUNK_SIZE)
@@ -102,7 +97,6 @@ impl Store {
                                         }
                                     }
                                 }
-
                             });
 
                         join_all(chunks).await;
@@ -112,13 +106,11 @@ impl Store {
                     _ = interval.tick() => {
                         if s_clone.buckets.is_empty() {
                             continue;
-
                         }
 
                         debug!("Cleanup tick");
 
                         let now = SystemTime::now();
-
                         let expired_keys: Vec<_> = s_clone
                             .buckets
                             .iter()
@@ -132,25 +124,19 @@ impl Store {
 
                         debug!("Found {} expired buckets to cleanup", expired_keys.len());
 
-                        let chunks: Vec<Vec<_>> = expired_keys
-                            .chunks(CHUNK_SIZE)
-                            .map(|c| c.to_vec())
-                            .collect();
-
-                        let handles = chunks
-                        .into_iter()
-                        .take(MAX_CONCURRENCY)
-                        .map(|chunk| {
-                            let s_for_task = s_clone.clone();
-                            async move {
-                                for key in chunk {
-                                    s_for_task.buckets.remove(&key);
+                        let mut handles = Vec::new();
+                        for chunk in expired_keys.chunks(CHUNK_SIZE) {
+                            handles.push({
+                                let s_clone = s_clone.clone();
+                                async move {
+                                    for key in chunk {
+                                        s_clone.buckets.remove(key);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
 
                         join_all(handles).await;
-
                     },
                 }
             }
