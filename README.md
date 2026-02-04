@@ -7,7 +7,7 @@ These instructions will get you a copy of the project up and running on your loc
 ### Prerequisites
 - :crab: [Rust](https://www.rust-lang.org/tools/install) installed on your machine.
 - :whale: [Docker](https://www.docker.com/get-started) to run dependant services.
-- :gear: [Make](https://www.gnu.org/software/make/) to run the project with `make` commands.
+- :gear: [just](https://github.com/casey/just) to run the project with `just` commands.
 - ⎈ [Minikube](https://minikube.sigs.k8s.io/docs/start) to run in a test cluster
 
 ### Build
@@ -25,8 +25,8 @@ cargo watch -x run  # Run the project with hot-reload
                     # (req: `cargo install cargo-watch`)
 cargo test          # Run the tests
 
-make clippy         # Run pedantic linter
-make cov            # Run tests with coverage
+just clippy         # Run pedantic linter
+just cov            # Run tests with coverage
 ```
 Optionally you can run the project with `cargo run --release` to enable optimizations.<br>
 To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run`.<br>
@@ -40,16 +40,31 @@ docker build -t that-limit:dev .
 docker run -d -p 8000:8000 that-limit:dev
 ```
 
-### With Make
-```bash
-make minikube-start     # Start the minikube
-make minikube-build     # Build a Docker image inside the minikube env
-make minikube-deploy    # Apply changes to create resourses in the cluster
-make minikube-up        # Start-build-deploy in one go
-make dev                # Start dependencies in Docker + run Rust app with hot reload
-make dev-up             # Start dependencies in Docker (redis, etc)
-make dev-down           # Stop Docker dependencies
+### With just
+Run `just` to see all available recipes:
+```text
+Available recipes:
+    clippy                                         # Run pedantic linter
+    cov                                            # Run tests with coverage
+    default
+    dev                                            # Start dependencies in Docker + run Rust app with hot reload
+    dev-down compose_file="docker-compose.dev.yml" # Stop Docker dependencies
+    dev-up compose_file="docker-compose.dev.yml"   # Start dependencies in Docker (redis, etc)
+    minikube-build image="that-limit:dev"          # Build a Docker image inside the minikube env
+    minikube-deploy                                # Apply changes to create resourses in the cluster
+    minikube-start                                 # Start the minikube
+    minikube-up                                    # Start-build-deploy in one go
 ```
+
+Common workflow:
+
+```bash
+just dev        # Start local development stack with hot reload
+just dev-up     # Start Docker dependencies only
+just dev-down   # Stop Docker dependencies
+just clippy     # Run formatting + strict linting
+```
+
 Additionally you can run `minikube dashboard` to check cluster in web console.
 
 Set up a tunnel to the service by running `minikube service that-limit-lb`. <br>
