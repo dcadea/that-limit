@@ -74,16 +74,6 @@ pub mod cache {
         port: String,
     }
 
-    // impl Default for Config {
-    //     fn default() -> Self {
-    //         warn!("Fallback to default REDIS config");
-    //         Self {
-    //             host: String::from("127.0.0.1"),
-    //             port: 6379,
-    //         }
-    //     }
-    // }
-
     impl Config {
         pub fn env() -> Option<Self> {
             let host = env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
