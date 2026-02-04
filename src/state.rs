@@ -19,7 +19,7 @@ impl AppState {
     pub async fn new(shutdown_tx: Sender<Command>) -> crate::Result<Self> {
         let cfg_path = env::var("CFG_PATH").unwrap_or_else(|_| String::from("static/config.json"));
         let cfg = Arc::new(cfg::get(&cfg_path)?);
-        let redis = cache::Config::env().unwrap_or_default().connect().await;
+        let redis = cache::Config::env().unwrap().connect().await;
 
         Ok(Self {
             cfg: cfg.clone(),
