@@ -94,7 +94,7 @@ pub mod cache {
             if let (Some(host), Some(port)) = (host, port) {
                 Some(Self { host, port })
             } else {
-                warn!("REDIS env is not confugred");
+                warn!("REDIS env is not configured");
                 None
             }
         }

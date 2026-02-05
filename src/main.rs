@@ -33,8 +33,8 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if let Err(_) = dotenv() {
-        panic!("Coudl not initialaize dotenv");
+    if let Err(e) = dotenv() {
+        panic!("Could not initialaize dotenv, {e:?}");
     }
     init_logger();
 
