@@ -6,6 +6,7 @@ use axum::{
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
 };
+use dotenv::dotenv;
 use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
@@ -32,6 +33,9 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if let Err(e) = dotenv() {
+        eprintln!("Could not initialaize dotenv, {e:?}");
+    }
     init_logger();
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<Command>(10);

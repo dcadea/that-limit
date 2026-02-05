@@ -88,9 +88,8 @@ pub mod cache {
         pub fn env() -> Option<Self> {
             let host = env::var("REDIS_HOST").ok();
             let port = env::var("REDIS_PORT")
-                .unwrap_or_else(|_| "6379".to_string())
-                .parse()
-                .ok();
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok());
 
             if let (Some(host), Some(port)) = (host, port) {
                 Some(Self { host, port })
