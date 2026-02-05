@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::Path, str::FromStr, time::Duration};
+use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 
 use axum::{
     Router,
@@ -6,7 +6,7 @@ use axum::{
     middleware::{from_fn, from_fn_with_state},
     routing::{get, post},
 };
-use dotenv::from_path;
+use dotenv::dotenv;
 use log::{LevelFilter, debug, error, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use tokio::{
@@ -33,8 +33,9 @@ pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    load_env();
-
+    if let Err(_) = dotenv() {
+        panic!("Coudl not initialaize dotenv");
+    }
     init_logger();
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<Command>(10);
@@ -139,19 +140,6 @@ async fn shutdown_signal(shutdown_tx: Sender<Command>, mut shutdown_rx: Receiver
                 break;
             }
         }
-    }
-}
-
-fn load_env() {
-    let path = Path::new("env/.env");
-
-    if path.exists() {
-        dotenv::from_path(path)
-            .unwrap_or_else(|_| panic!("Failed to load env file at {}", path.display()));
-        // info!() do not work here, idk why
-        eprintln!("Loaded env from {}", path.display());
-    } else {
-        from_path(path).unwrap_or_else(|_| panic!("Failed to load env file at {}", path.display()))
     }
 }
 

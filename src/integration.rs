@@ -71,15 +71,32 @@ pub mod cache {
     #[derive(Clone)]
     pub struct Config {
         host: String,
-        port: String,
+        port: u16,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            warn!("Fallback to default REDIS config");
+            Self {
+                host: String::from("127.0.0.1"),
+                port: 6379,
+            }
+        }
     }
 
     impl Config {
         pub fn env() -> Option<Self> {
-            let host = env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-            let port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
+            let host = env::var("REDIS_HOST").ok();
+            let port = env::var("REDIS_PORT")
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok());
 
-            Some(Self { host, port })
+            if let (Some(host), Some(port)) = (host, port) {
+                Some(Self { host, port })
+            } else {
+                warn!("REDIS env is not confugred");
+                None
+            }
         }
 
         pub async fn connect(&self) -> Redis {
@@ -172,7 +189,7 @@ pub mod cache {
         use super::*;
 
         impl Config {
-            pub fn test(host: String, port: String) -> Self {
+            pub fn test(host: String, port: u16) -> Self {
                 Self { host, port }
             }
         }
