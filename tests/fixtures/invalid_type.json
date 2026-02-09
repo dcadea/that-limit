@@ -1,5 +1,4 @@
 {
-  "sync_every": 50,
   "protected": {
     "criteria": "sub",
     "quota": 10000,

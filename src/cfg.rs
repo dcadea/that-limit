@@ -50,7 +50,6 @@ impl Criteria {
 #[derive(Clone, Deserialize, Debug, Serialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
-    pub sync_every: u8,
     pub protected: Criteria,
     pub public: Criteria,
 }
@@ -59,7 +58,6 @@ pub struct Config {
 impl Config {
     pub fn test() -> Self {
         Self {
-            sync_every: 50,
             protected: Criteria::Sub(Quota {
                 quota: 10000,
                 reset_in: Duration::from_secs(600),
@@ -73,7 +71,6 @@ impl Config {
 
     pub fn with_quota(quota: u64) -> Self {
         Self {
-            sync_every: 50,
             protected: Criteria::Sub(Quota {
                 quota,
                 reset_in: Duration::from_secs(600),
@@ -129,7 +126,6 @@ mod test {
         assert_eq!(
             c.unwrap(),
             Config {
-                sync_every: 50,
                 protected: Criteria::Sub(Quota {
                     quota: 10000,
                     reset_in: Duration::from_secs(600)
@@ -176,7 +172,6 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let expected = Config {
-            sync_every: 50,
             protected: Criteria::Sub(Quota {
                 quota: 10000,
                 reset_in: Duration::from_secs(600),
