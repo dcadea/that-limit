@@ -36,8 +36,6 @@ pub struct Store {
     redis: cache::Redis,
 }
 
-// TODO: make configurable based on number of nodes to not exceed bucket size
-const LEASE_SIZE: u64 = 100;
 const CHUNK_SIZE: usize = 200;
 
 impl Store {
@@ -154,11 +152,12 @@ impl Store {
 
         let tokens: cache::Result<u64> = self.redis.get(&key).await;
 
+        let lease_size = self.config.lease_size;
         let (leased, ttl) = match tokens {
             // We'll respond with 429 when cannot lease from cache anymore
             Ok(0) => return Err(Error::Exhausted(b_id)),
             Ok(tokens) => {
-                let leased = min(tokens, LEASE_SIZE);
+                let leased = min(tokens, lease_size);
 
                 self.redis.decr(&key, leased).await?;
 
@@ -173,15 +172,15 @@ impl Store {
                 };
 
                 // ideally should never happen, but if will - panic
-                assert!(criteria.quota() > LEASE_SIZE);
+                assert!(criteria.quota() >= lease_size);
 
                 let ttl = criteria.reset_in();
 
                 self.redis
-                    .set_ex(&key, criteria.quota() - LEASE_SIZE, ttl)
+                    .set_ex(&key, criteria.quota() - lease_size, ttl)
                     .await?;
 
-                (LEASE_SIZE, ttl)
+                (lease_size, ttl)
             }
 
             Err(e) => return Err(Error::from(e)),
@@ -293,10 +292,7 @@ pub mod handler {
             init_router,
             middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
             state::test::State,
-            store::{
-                LEASE_SIZE,
-                handler::{CheckResponse, ConsumeResponse, test},
-            },
+            store::handler::{CheckResponse, ConsumeResponse, test},
         };
 
         #[tokio::test]
@@ -550,24 +546,22 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_return_exhausted_when_no_quota_left() {
-            const QUOTA: u64 = LEASE_SIZE + 1;
-            let ts = test::State::with_cfg(Config::with_quota(QUOTA)).await;
+            let config = Config::test().with_protected_quota(1).with_lease_size(1);
+            let ts = test::State::with_cfg(config).await;
             let app = init_router(ts.app_state().clone());
 
-            for _ in [0; QUOTA as usize] {
-                let _ = app
-                    .clone()
-                    .oneshot(
-                        Request::builder()
-                            .method(http::Method::POST)
-                            .uri("/consume")
-                            .header("user_id", "valera")
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-            }
+            let _ = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/consume")
+                        .header("user_id", "valera")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
             let response = app
                 .oneshot(

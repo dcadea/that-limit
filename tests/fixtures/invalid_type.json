@@ -1,4 +1,5 @@
 {
+  "lease_size": 100,
   "protected": {
     "criteria": "sub",
     "quota": 10000,
