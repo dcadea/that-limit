@@ -75,7 +75,17 @@ impl Config {
         Self {
             protected: Criteria::Sub(Quota {
                 quota,
-                reset_in: Duration::from_secs(600),
+                reset_in: self.protected.reset_in(),
+            }),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_protected_reset_in(&self, reset_in: Duration) -> Self {
+        Self {
+            protected: Criteria::Sub(Quota {
+                quota: self.protected.quota(),
+                reset_in,
             }),
             ..self.clone()
         }

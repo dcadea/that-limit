@@ -279,11 +279,14 @@ pub mod handler {
 
     #[cfg(test)]
     mod test {
+        use std::time::Duration;
+
         use axum::{
             body::Body,
             http::{self, Request, StatusCode},
         };
         use http_body_util::BodyExt;
+        use tokio::time;
         use tower::ServiceExt;
 
         use crate::{
@@ -295,28 +298,39 @@ pub mod handler {
             store::handler::{CheckResponse, ConsumeResponse, test},
         };
 
+        const TEST_USER: &str = "valera";
+
+        fn consume_request(user_id: &str) -> Request<Body> {
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/consume")
+                .header(USER_ID, user_id)
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        fn check_request(user_id: &str) -> Request<Body> {
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/check")
+                .header(USER_ID, user_id)
+                .body(Body::empty())
+                .unwrap()
+        }
+
         #[tokio::test]
         async fn should_respond_ok_on_consume_authorized() {
             let ts = test::State::new().await;
             let app = init_router(ts.app_state().clone());
 
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
+            let config = ts.config();
             let expexted = ConsumeResponse {
-                bucket_id: bucket::Id::Protected("valera".to_string()),
-                tokens_left: 99,
+                bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
+                tokens_left: config.lease_size - 1,
             };
 
             let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -355,9 +369,10 @@ pub mod handler {
 
                 assert_eq!(StatusCode::OK, response.status());
 
+                let config = ts.config();
                 let expexted = ConsumeResponse {
                     bucket_id: bucket::Id::Public(ip.parse().unwrap()),
-                    tokens_left: 99,
+                    tokens_left: config.lease_size - 1,
                 };
 
                 let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -414,35 +429,19 @@ pub mod handler {
             // first call will lease
             let _ = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(consume_request(TEST_USER))
                 .await
                 .unwrap();
 
             // second call will skip lease and deduct from local store
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
+            let config = ts.config();
             let expexted = ConsumeResponse {
-                bucket_id: bucket::Id::Protected("valera".to_string()),
-                tokens_left: 98,
+                bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
+                tokens_left: config.lease_size - 2,
             };
 
             let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -478,33 +477,16 @@ pub mod handler {
             // ignore response, this is to lease first batch of tokens
             let _ = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(consume_request(TEST_USER))
                 .await
                 .unwrap();
 
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::GET)
-                        .uri("/check")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = app.oneshot(check_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
             let expexted = CheckResponse {
-                bucket_id: bucket::Id::Protected("valera".to_string()),
+                bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
                 allowed: true,
             };
 
@@ -519,22 +501,12 @@ pub mod handler {
             let ts = test::State::new().await;
             let app = init_router(ts.app_state().clone());
 
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::GET)
-                        .uri("/check")
-                        .header(USER_ID, "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = app.oneshot(check_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
             let expexted = CheckResponse {
-                bucket_id: bucket::Id::Protected("valera".to_string()),
+                bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
                 allowed: false,
             };
 
@@ -552,30 +524,81 @@ pub mod handler {
 
             let _ = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header("user_id", "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(consume_request(TEST_USER))
                 .await
                 .unwrap();
 
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .method(http::Method::POST)
-                        .uri("/consume")
-                        .header("user_id", "valera")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
+        }
+
+        #[tokio::test]
+        async fn should_lease_more_tokens_when_bucket_is_exhausted_and_quota_not_exceeded() {
+            let config = Config::test().with_protected_quota(5).with_lease_size(2);
+            let ts = test::State::with_cfg(config).await;
+            let app = init_router(ts.app_state().clone());
+
+            // first request leases first batch of tokens
+            let response = app
+                .clone()
+                .oneshot(consume_request(TEST_USER))
+                .await
+                .unwrap();
+            assert_eq!(StatusCode::OK, response.status());
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(1, actual.tokens_left);
+
+            // this will consume last token
+            let response = app
+                .clone()
+                .oneshot(consume_request(TEST_USER))
+                .await
+                .unwrap();
+            assert_eq!(StatusCode::OK, response.status());
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(0, actual.tokens_left);
+
+            // one more request to lease new batch of tokens
+            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
+            assert_eq!(StatusCode::OK, response.status());
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(1, actual.tokens_left);
+        }
+
+        #[tokio::test]
+        async fn should_return_zero_when_bucket_is_expired() {
+            let reset_in = Duration::from_secs(1);
+            let config = Config::test().with_protected_reset_in(reset_in);
+            let ts = test::State::with_cfg(config).await;
+            let app = init_router(ts.app_state().clone());
+
+            // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
+            let response = app
+                .clone()
+                .oneshot(consume_request(TEST_USER))
+                .await
+                .unwrap();
+            assert_eq!(StatusCode::OK, response.status());
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(ts.config().lease_size - 1, actual.tokens_left);
+
+            // wait for bucket to expire
+            time::sleep(reset_in).await;
+
+            let response = app
+                .clone()
+                .oneshot(consume_request(TEST_USER))
+                .await
+                .unwrap();
+            assert_eq!(StatusCode::OK, response.status());
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(0, actual.tokens_left);
         }
     }
 }
