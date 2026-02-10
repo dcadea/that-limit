@@ -50,6 +50,7 @@ impl Criteria {
 #[derive(Clone, Deserialize, Debug, Serialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
+    pub lease_size: u64,
     pub protected: Criteria,
     pub public: Criteria,
 }
@@ -58,6 +59,7 @@ pub struct Config {
 impl Config {
     pub fn test() -> Self {
         Self {
+            lease_size: 100,
             protected: Criteria::Sub(Quota {
                 quota: 10000,
                 reset_in: Duration::from_secs(600),
@@ -69,16 +71,20 @@ impl Config {
         }
     }
 
-    pub fn with_quota(quota: u64) -> Self {
+    pub fn with_protected_quota(&self, quota: u64) -> Self {
         Self {
             protected: Criteria::Sub(Quota {
                 quota,
                 reset_in: Duration::from_secs(600),
             }),
-            public: Criteria::Ip(Quota {
-                quota,
-                reset_in: Duration::from_hours(1),
-            }),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_lease_size(&self, lease_size: u64) -> Self {
+        Self {
+            lease_size,
+            ..self.clone()
         }
     }
 }
@@ -126,6 +132,7 @@ mod test {
         assert_eq!(
             c.unwrap(),
             Config {
+                lease_size: 100,
                 protected: Criteria::Sub(Quota {
                     quota: 10000,
                     reset_in: Duration::from_secs(600)
@@ -172,6 +179,7 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let expected = Config {
+            lease_size: 100,
             protected: Criteria::Sub(Quota {
                 quota: 10000,
                 reset_in: Duration::from_secs(600),
