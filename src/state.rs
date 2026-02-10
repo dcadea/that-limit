@@ -53,6 +53,7 @@ pub mod test {
     /// for the whole duration of the test.
     pub struct State {
         inner: AppState,
+        cfg: Arc<Config>,
         _redis_container: Arc<ContainerAsync<testcontainers_modules::redis::Redis>>,
     }
 
@@ -82,14 +83,19 @@ pub mod test {
             Self {
                 inner: AppState {
                     cfg: cfg.clone(),
-                    store: store::Store::new(cfg, redis, shutdown_tx),
+                    store: store::Store::new(cfg.clone(), redis, shutdown_tx),
                 },
+                cfg,
                 _redis_container: rc,
             }
         }
 
         pub const fn app_state(&self) -> &AppState {
             &self.inner
+        }
+
+        pub fn config(&self) -> &Config {
+            &self.cfg
         }
     }
 }
