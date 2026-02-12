@@ -187,7 +187,6 @@ pub mod test {
     /// for the whole duration of the test.
     pub struct TestApp {
         inner: AppState,
-        store: Arc<store::Store>,
         cfg: Config,
         _redis_container: Arc<ContainerAsync<testcontainers_modules::redis::Redis>>,
     }
@@ -221,7 +220,6 @@ pub mod test {
 
             Self {
                 inner: AppState::new(store.clone()),
-                store,
                 cfg,
                 _redis_container: rc,
             }
@@ -229,10 +227,6 @@ pub mod test {
 
         pub const fn app_state(&self) -> &AppState {
             &self.inner
-        }
-
-        pub fn store(&self) -> Arc<store::Store> {
-            self.store.clone()
         }
 
         pub const fn config(&self) -> &Config {

@@ -239,44 +239,107 @@ impl Store {
 
 #[cfg(test)]
 mod test {
-    use std::{net::IpAddr, time::Duration};
+    use std::{net::IpAddr, sync::Arc, time::Duration};
 
-    use tokio::time;
+    use testcontainers_modules::testcontainers::{ImageExt, runners::AsyncRunner};
+    use tokio::{sync::broadcast, time};
+
+    use super::*;
 
     use crate::{
-        bootstrap::test::TestApp,
         bucket,
         cfg::{Cleanup, Config},
+        integration::{Command, cache},
     };
 
     #[tokio::test]
-    async fn should_perform_shutdown_on_signal() {
-        let cleanup_interval = Duration::from_millis(75);
+    async fn should_perform_cleanup_on_tick() {
+        let rc = testcontainers_modules::redis::Redis::default()
+            .with_tag("7")
+            .start()
+            .await
+            .map(Arc::new)
+            .unwrap();
+        let host = rc.get_host().await.unwrap().to_string();
+        let port = rc.get_host_port_ipv4(6379).await.unwrap();
+        let redis = cache::Config::test(host, port).connect().await;
+
         let cfg = Config::default()
             .with_cleanup(Cleanup {
                 enabled: true,
-                interval: cleanup_interval,
+                interval: Duration::from_millis(50),
             })
-            .with_protected_reset_in(Duration::from_millis(50));
-        let app = TestApp::with_cfg(cfg).await;
+            .with_protected_reset_in(Duration::from_millis(25));
 
-        let store = app.store();
+        let (shutdown_tx, _) = broadcast::channel::<Command>(10);
+
+        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx));
+
         let valera = bucket::Id::Protected("valera".to_string());
         let jora = bucket::Id::Protected("jora".to_string());
         let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
 
         for b_id in [&valera, &jora, &public] {
-            let tokens = app.config().quota(b_id);
-            let ttl = app.config().reset_in(b_id);
+            let tokens = cfg.quota(b_id);
+            let ttl = cfg.reset_in(b_id);
             store.add(b_id.clone(), tokens, ttl);
         }
 
         // let cleanup task to tick
-        time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(75)).await;
 
         assert!(!store.check(&valera).unwrap());
         assert!(!store.check(&jora).unwrap());
         assert!(store.check(&public).unwrap());
+    }
+
+    #[tokio::test]
+    async fn should_perform_shutdown_on_signal() {
+        let rc = testcontainers_modules::redis::Redis::default()
+            .with_tag("7")
+            .start()
+            .await
+            .map(Arc::new)
+            .unwrap();
+        let host = rc.get_host().await.unwrap().to_string();
+        let port = rc.get_host_port_ipv4(6379).await.unwrap();
+        let redis = cache::Config::test(host, port).connect().await;
+
+        let cfg = Config::default().with_cleanup(Cleanup {
+            enabled: true,
+            interval: Duration::from_millis(25),
+        });
+
+        let (shutdown_tx, _) = broadcast::channel::<Command>(10);
+
+        let tx_clone = shutdown_tx.clone();
+        tokio::spawn(async move {
+            let tx_clone = tx_clone.clone();
+            time::sleep(Duration::from_millis(50)).await;
+            tx_clone.send(Command::Shutdown).unwrap();
+        });
+
+        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx.clone()));
+
+        let valera = bucket::Id::Protected("valera".to_string());
+        let jora = bucket::Id::Protected("jora".to_string());
+        let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
+
+        for b_id in [&valera, &jora, &public] {
+            let tokens = cfg.quota(b_id);
+            let ttl = cfg.reset_in(b_id);
+            store.add(b_id.clone(), tokens, ttl);
+        }
+
+        // wait for shutdown command
+        time::sleep(Duration::from_millis(75)).await;
+
+        // no cleanup was performed, all buckets should still have tokens left
+        assert!(store.check(&valera).unwrap());
+        assert!(store.check(&jora).unwrap());
+        assert!(store.check(&public).unwrap());
+
+        // TODO: check that leased tokens were returned to redis
     }
 }
 
