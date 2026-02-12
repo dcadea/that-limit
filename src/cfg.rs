@@ -86,6 +86,9 @@ impl Default for Config {
 }
 
 #[cfg(test)]
+use crate::bucket;
+
+#[cfg(test)]
 impl Config {
     pub fn with_protected_quota(&self, quota: u64) -> Self {
         Self {
@@ -111,6 +114,27 @@ impl Config {
         Self {
             lease_size,
             ..self.clone()
+        }
+    }
+
+    pub fn with_cleanup(&self, cleanup: Cleanup) -> Self {
+        Self {
+            cleanup,
+            ..self.clone()
+        }
+    }
+
+    pub const fn quota(&self, b_id: &bucket::Id) -> u64 {
+        match b_id {
+            bucket::Id::Public(_) => self.public.quota(),
+            bucket::Id::Protected(_) => self.protected.quota(),
+        }
+    }
+
+    pub const fn reset_in(&self, b_id: &bucket::Id) -> Duration {
+        match b_id {
+            bucket::Id::Public(_) => self.public.reset_in(),
+            bucket::Id::Protected(_) => self.protected.reset_in(),
         }
     }
 }

@@ -173,15 +173,21 @@ pub mod test {
     use std::sync::Arc;
 
     use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
+    use tokio::sync::broadcast;
 
     use crate::{
-        bootstrap::init_test_logger, cfg::Config, integration::cache, state::AppState, store,
+        bootstrap::init_test_logger,
+        cfg::Config,
+        integration::{Command, cache},
+        state::AppState,
+        store,
     };
 
     /// Wrapper App to keep redis container alive
     /// for the whole duration of the test.
     pub struct TestApp {
         inner: AppState,
+        store: Arc<store::Store>,
         cfg: Config,
         _redis_container: Arc<ContainerAsync<testcontainers_modules::redis::Redis>>,
     }
@@ -203,10 +209,19 @@ pub mod test {
             let host = rc.get_host().await.unwrap().to_string();
             let port = rc.get_host_port_ipv4(6379).await.unwrap();
 
+            let shutdown_tx = if cfg.cleanup.enabled {
+                let (tx, _) = broadcast::channel::<Command>(10);
+                Some(tx)
+            } else {
+                None
+            };
+
             let redis = cache::Config::test(host, port).connect().await;
+            let store = store::Store::new(cfg.clone(), redis, shutdown_tx);
 
             Self {
-                inner: AppState::new(store::Store::new(cfg.clone(), redis, None)),
+                inner: AppState::new(store.clone()),
+                store,
                 cfg,
                 _redis_container: rc,
             }
@@ -216,7 +231,11 @@ pub mod test {
             &self.inner
         }
 
-        pub fn config(&self) -> &Config {
+        pub fn store(&self) -> Arc<store::Store> {
+            self.store.clone()
+        }
+
+        pub const fn config(&self) -> &Config {
             &self.cfg
         }
     }

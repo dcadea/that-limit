@@ -237,6 +237,49 @@ impl Store {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use std::{net::IpAddr, time::Duration};
+
+    use tokio::time;
+
+    use crate::{
+        bootstrap::test::TestApp,
+        bucket,
+        cfg::{Cleanup, Config},
+    };
+
+    #[tokio::test]
+    async fn should_perform_shutdown_on_signal() {
+        let cleanup_interval = Duration::from_millis(75);
+        let cfg = Config::default()
+            .with_cleanup(Cleanup {
+                enabled: true,
+                interval: cleanup_interval,
+            })
+            .with_protected_reset_in(Duration::from_millis(50));
+        let app = TestApp::with_cfg(cfg).await;
+
+        let store = app.store();
+        let valera = bucket::Id::Protected("valera".to_string());
+        let jora = bucket::Id::Protected("jora".to_string());
+        let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
+
+        for b_id in [&valera, &jora, &public] {
+            let tokens = app.config().quota(b_id);
+            let ttl = app.config().reset_in(b_id);
+            store.add(b_id.clone(), tokens, ttl);
+        }
+
+        // let cleanup task to tick
+        time::sleep(Duration::from_millis(100)).await;
+
+        assert!(!store.check(&valera).unwrap());
+        assert!(!store.check(&jora).unwrap());
+        assert!(store.check(&public).unwrap());
+    }
+}
+
 pub mod handler {
     use std::sync::Arc;
 
