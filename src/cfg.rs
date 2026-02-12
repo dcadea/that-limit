@@ -47,19 +47,32 @@ impl Criteria {
     }
 }
 
+#[serde_as]
+#[derive(Clone, Deserialize, Debug, Serialize)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub struct Cleanup {
+    pub enabled: bool,
+    #[serde_as(as = "DurationSeconds<u64>")]
+    pub interval: Duration,
+}
+
 #[derive(Clone, Deserialize, Debug, Serialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
     pub lease_size: u64,
+    pub cleanup: Cleanup,
     pub protected: Criteria,
     pub public: Criteria,
 }
 
-#[cfg(test)]
-impl Config {
-    pub fn test() -> Self {
+impl Default for Config {
+    fn default() -> Self {
         Self {
             lease_size: 100,
+            cleanup: Cleanup {
+                enabled: false,
+                interval: Duration::default(),
+            },
             protected: Criteria::Sub(Quota {
                 quota: 10000,
                 reset_in: Duration::from_secs(600),
@@ -70,7 +83,10 @@ impl Config {
             }),
         }
     }
+}
 
+#[cfg(test)]
+impl Config {
     pub fn with_protected_quota(&self, quota: u64) -> Self {
         Self {
             protected: Criteria::Sub(Quota {
@@ -99,39 +115,15 @@ impl Config {
     }
 }
 
-pub mod handler {
-
-    use std::sync::Arc;
-
-    use axum::{Json, extract::State};
-
-    use crate::cfg::Config;
-
-    pub async fn get(config: State<Arc<Config>>) -> Json<Config> {
-        Json(Config::clone(&config))
-    }
-}
-
 pub fn get(path: &str) -> Result<Config, Error> {
-    let content = fs::read_to_string(path)?;
-
-    let config = serde_json::from_str::<Config>(&content)?;
-
+    let content = fs::read(path)?;
+    let config = serde_json::from_slice(&content)?;
     Ok(config)
 }
 
 #[cfg(test)]
 mod test {
     use std::time::Duration;
-
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
-
-    use crate::{init_router, state::test};
 
     use super::*;
 
@@ -143,6 +135,10 @@ mod test {
             c.unwrap(),
             Config {
                 lease_size: 100,
+                cleanup: Cleanup {
+                    enabled: true,
+                    interval: Duration::from_secs(5),
+                },
                 protected: Criteria::Sub(Quota {
                     quota: 10000,
                     reset_in: Duration::from_secs(600)
@@ -169,40 +165,5 @@ mod test {
         assert!(
             matches!(c.unwrap_err(), Error::Json(e) if e.to_string().contains(r#"invalid type: string "600", expected u64"#))
         );
-    }
-
-    #[tokio::test]
-    async fn should_respond_ok_on_get_config() {
-        let ts = test::State::new().await;
-        let app = init_router(ts.app_state().clone());
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/config")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(StatusCode::OK, response.status());
-
-        let expected = Config {
-            lease_size: 100,
-            protected: Criteria::Sub(Quota {
-                quota: 10000,
-                reset_in: Duration::from_secs(600),
-            }),
-            public: Criteria::Ip(Quota {
-                quota: 500,
-                reset_in: Duration::from_hours(1),
-            }),
-        };
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: Config = serde_json::from_slice(&body).unwrap();
-
-        assert_eq!(expected, actual);
     }
 }

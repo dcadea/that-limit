@@ -32,7 +32,7 @@ pub enum Error {
 
 pub struct Store {
     buckets: DashMap<bucket::Id, Bucket>,
-    config: Arc<Config>,
+    config: Config,
     redis: cache::Redis,
 }
 
@@ -40,12 +40,11 @@ const CHUNK_SIZE: usize = 200;
 
 impl Store {
     pub fn new(
-        config: Arc<Config>,
+        config: Config,
         redis: cache::Redis,
-        shutdown_tx: Sender<Command>,
+        shutdown_tx: Option<Sender<Command>>,
     ) -> Arc<Self> {
         let buckets = DashMap::with_capacity(10000);
-        let mut shutdown_rx = shutdown_tx.subscribe();
 
         let s = Arc::new(Self {
             buckets,
@@ -55,94 +54,98 @@ impl Store {
 
         let s_clone = s.clone();
 
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+        if let Some(shutdown_tx) = shutdown_tx {
+            let mut shutdown_rx = shutdown_tx.subscribe();
 
-            loop {
-                tokio::select! {
-                    Ok(Command::Shutdown) = shutdown_rx.recv() => {
-                        debug!("Stop cleanup task and return leased tokens");
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(s_clone.config.cleanup.interval);
 
-                        if s_clone.buckets.is_empty() {
-                            break;
-                        }
+                loop {
+                    tokio::select! {
+                        Ok(Command::Shutdown) = shutdown_rx.recv() => {
+                            debug!("Stop cleanup task and return leased tokens");
 
-                        let now = SystemTime::now();
-                        let replenish: Vec<_> = s_clone
-                            .buckets
-                            .iter()
-                            .filter(|e| e.tokens > 0)
-                            .filter(|e| e.expires_at > now)
-                            .map(|e| (e.key().clone(), e.value().tokens))
-                            .collect();
+                            if s_clone.buckets.is_empty() {
+                                break;
+                            }
 
-                        if replenish.is_empty() {
-                            break;
-                        }
+                            let now = SystemTime::now();
+                            let replenish: Vec<_> = s_clone
+                                .buckets
+                                .iter()
+                                .filter(|e| e.tokens > 0)
+                                .filter(|e| e.expires_at > now)
+                                .map(|e| (e.key().clone(), e.value().tokens))
+                                .collect();
 
-                        debug!("# of buckets that should return leased tokens: {}", replenish.len());
+                            if replenish.is_empty() {
+                                break;
+                            }
 
-                        let chunks = replenish
-                            .chunks(CHUNK_SIZE)
-                            .map(|chunk| {
-                                let redis = redis.clone();
+                            debug!("# of buckets that should return leased tokens: {}", replenish.len());
 
-                                async move {
-                                    for (key, tokens_left) in chunk {
-                                        let key = cache::Key::from(key);
-                                        if let Err(e) = redis.incr(&key, *tokens_left).await {
-                                            error!("Could not return left tokens for: {key:?}, {e:?}");
+                            let chunks = replenish
+                                .chunks(CHUNK_SIZE)
+                                .map(|chunk| {
+                                    let redis = redis.clone();
+
+                                    async move {
+                                        for (key, tokens_left) in chunk {
+                                            let key = cache::Key::from(key);
+                                            if let Err(e) = redis.incr(&key, *tokens_left).await {
+                                                error!("Could not return left tokens for: {key:?}, {e:?}");
+                                            }
                                         }
                                     }
-                                }
-                            });
+                                });
 
-                        join_all(chunks).await;
+                            join_all(chunks).await;
 
-                        break;
-                    },
-                    _ = interval.tick() => {
-                        if s_clone.buckets.is_empty() {
-                            continue;
-                        }
+                            break;
+                        },
+                        _ = interval.tick() => {
+                            if s_clone.buckets.is_empty() {
+                                continue;
+                            }
 
-                        debug!("Cleanup tick");
+                            debug!("Cleanup tick");
 
-                        let now = SystemTime::now();
-                        let expired_keys: Vec<_> = s_clone
-                            .buckets
-                            .iter()
-                            .filter(|e| e.value().expires_at <= now)
-                            .map(|e| e.key().clone())
-                            .collect();
+                            let now = SystemTime::now();
+                            let expired_keys: Vec<_> = s_clone
+                                .buckets
+                                .iter()
+                                .filter(|e| e.value().expires_at <= now)
+                                .map(|e| e.key().clone())
+                                .collect();
 
-                        if expired_keys.is_empty() {
-                            continue;
-                        }
+                            if expired_keys.is_empty() {
+                                continue;
+                            }
 
-                        debug!("Found {} expired buckets to cleanup", expired_keys.len());
+                            debug!("Found {} expired buckets to cleanup", expired_keys.len());
 
-                        let mut handles = Vec::new();
-                        for chunk in expired_keys.chunks(CHUNK_SIZE) {
-                            handles.push({
-                                let s_clone = s_clone.clone();
-                                async move {
-                                    for key in chunk {
-                                        s_clone.buckets.remove(key);
+                            let mut handles = Vec::new();
+                            for chunk in expired_keys.chunks(CHUNK_SIZE) {
+                                handles.push({
+                                    let s_clone = s_clone.clone();
+                                    async move {
+                                        for key in chunk {
+                                            s_clone.buckets.remove(key);
+                                        }
                                     }
-                                }
-                            });
-                        }
+                                });
+                            }
 
-                        join_all(handles).await;
-                    },
+                            join_all(handles).await;
+                        },
+                    }
                 }
-            }
 
-            if let Err(e) = shutdown_tx.send(Command::CleanupComplete) {
-                error!("Failed to send CleanupComplete event, {e:?}");
-            }
-        });
+                if let Err(e) = shutdown_tx.send(Command::CleanupComplete) {
+                    error!("Failed to send CleanupComplete event, {e:?}");
+                }
+            });
+        }
 
         s
     }
@@ -290,12 +293,11 @@ pub mod handler {
         use tower::ServiceExt;
 
         use crate::{
+            bootstrap::{init_router, test::TestApp},
             bucket,
             cfg::Config,
-            init_router,
             middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
-            state::test::State,
-            store::handler::{CheckResponse, ConsumeResponse, test},
+            store::handler::{CheckResponse, ConsumeResponse},
         };
 
         const TEST_USER: &str = "valera";
@@ -320,14 +322,14 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_respond_ok_on_consume_authorized() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
-            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
-            let config = ts.config();
+            let config = app.config();
             let expexted = ConsumeResponse {
                 bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
                 tokens_left: config.lease_size - 1,
@@ -341,8 +343,8 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_respond_ok_on_consume_public() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
             let ip_headers = [
                 (FORWARDED, "89.28.75.89"),
@@ -354,7 +356,7 @@ pub mod handler {
             ];
 
             for (h, ip) in ip_headers {
-                let response = app
+                let response = r
                     .clone()
                     .oneshot(
                         Request::builder()
@@ -369,7 +371,7 @@ pub mod handler {
 
                 assert_eq!(StatusCode::OK, response.status());
 
-                let config = ts.config();
+                let config = app.config();
                 let expexted = ConsumeResponse {
                     bucket_id: bucket::Id::Public(ip.parse().unwrap()),
                     tokens_left: config.lease_size - 1,
@@ -384,8 +386,8 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_fail_on_consume_public_malformed() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
             let ip_headers = [
                 (FORWARDED, ""),
@@ -404,7 +406,7 @@ pub mod handler {
             ];
 
             for (h, ip) in ip_headers {
-                let response = app
+                let response = r
                     .clone()
                     .oneshot(
                         Request::builder()
@@ -423,22 +425,18 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_respond_ok_on_subsequent_consume() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
             // first call will lease
-            let _ = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
 
             // second call will skip lease and deduct from local store
-            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
-            let config = ts.config();
+            let config = app.config();
             let expexted = ConsumeResponse {
                 bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
                 tokens_left: config.lease_size - 2,
@@ -452,10 +450,10 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_fail_on_consume_unauthorized() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
-            let response = app
+            let response = r
                 .oneshot(
                     Request::builder()
                         .method(http::Method::POST)
@@ -471,17 +469,13 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_return_allowed_true_on_check() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
             // ignore response, this is to lease first batch of tokens
-            let _ = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
 
-            let response = app.oneshot(check_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(check_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
@@ -498,10 +492,10 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_return_allowed_false_on_check() {
-            let ts = test::State::new().await;
-            let app = init_router(ts.app_state().clone());
+            let app = TestApp::new().await;
+            let r = init_router(app.app_state().clone());
 
-            let response = app.oneshot(check_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(check_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::OK, response.status());
 
@@ -518,51 +512,39 @@ pub mod handler {
 
         #[tokio::test]
         async fn should_return_exhausted_when_no_quota_left() {
-            let config = Config::test().with_protected_quota(1).with_lease_size(1);
-            let ts = test::State::with_cfg(config).await;
-            let app = init_router(ts.app_state().clone());
+            let config = Config::default().with_protected_quota(1).with_lease_size(1);
+            let app = TestApp::with_cfg(config).await;
+            let r = init_router(app.app_state().clone());
 
-            let _ = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
 
-            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
 
             assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
         }
 
         #[tokio::test]
         async fn should_lease_more_tokens_when_bucket_is_exhausted_and_quota_not_exceeded() {
-            let config = Config::test().with_protected_quota(5).with_lease_size(2);
-            let ts = test::State::with_cfg(config).await;
-            let app = init_router(ts.app_state().clone());
+            let config = Config::default().with_protected_quota(5).with_lease_size(2);
+            let app = TestApp::with_cfg(config).await;
+            let r = init_router(app.app_state().clone());
 
             // first request leases first batch of tokens
-            let response = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
             assert_eq!(StatusCode::OK, response.status());
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
             assert_eq!(1, actual.tokens_left);
 
             // this will consume last token
-            let response = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
             assert_eq!(StatusCode::OK, response.status());
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
             assert_eq!(0, actual.tokens_left);
 
             // one more request to lease new batch of tokens
-            let response = app.oneshot(consume_request(TEST_USER)).await.unwrap();
+            let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
             assert_eq!(StatusCode::OK, response.status());
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
@@ -572,29 +554,21 @@ pub mod handler {
         #[tokio::test]
         async fn should_return_zero_when_bucket_is_expired() {
             let reset_in = Duration::from_secs(1);
-            let config = Config::test().with_protected_reset_in(reset_in);
-            let ts = test::State::with_cfg(config).await;
-            let app = init_router(ts.app_state().clone());
+            let config = Config::default().with_protected_reset_in(reset_in);
+            let app = TestApp::with_cfg(config).await;
+            let r = init_router(app.app_state().clone());
 
             // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
-            let response = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
             assert_eq!(StatusCode::OK, response.status());
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-            assert_eq!(ts.config().lease_size - 1, actual.tokens_left);
+            assert_eq!(app.config().lease_size - 1, actual.tokens_left);
 
             // wait for bucket to expire
             time::sleep(reset_in).await;
 
-            let response = app
-                .clone()
-                .oneshot(consume_request(TEST_USER))
-                .await
-                .unwrap();
+            let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
             assert_eq!(StatusCode::OK, response.status());
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
