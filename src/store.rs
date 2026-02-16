@@ -276,7 +276,7 @@ mod test {
 
         let (shutdown_tx, _) = broadcast::channel::<Command>(10);
 
-        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx));
+        let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx));
 
         let valera = bucket::Id::Protected("valera".to_string());
         let jora = bucket::Id::Protected("jora".to_string());
@@ -322,7 +322,7 @@ mod test {
             tx_clone.send(Command::Shutdown).unwrap();
         });
 
-        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx.clone()));
+        let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx.clone()));
 
         let valera = bucket::Id::Protected("valera".to_string());
         let jora = bucket::Id::Protected("jora".to_string());
@@ -342,7 +342,19 @@ mod test {
         assert!(store.check(&jora).unwrap());
         assert!(store.check(&public).unwrap());
 
-        // TODO: check that leased tokens were returned to redis
+        // tokens should return to redis
+        assert_eq!(
+            cfg.protected.quota(),
+            redis.execute(Get::<_, u64>::new(valera)).await.unwrap()
+        );
+        assert_eq!(
+            cfg.protected.quota(),
+            redis.execute(Get::<_, u64>::new(jora)).await.unwrap()
+        );
+        assert_eq!(
+            cfg.public.quota(),
+            redis.execute(Get::<_, u64>::new(public)).await.unwrap()
+        )
     }
 }
 
