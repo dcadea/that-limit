@@ -1,3 +1,5 @@
+use std::env::VarError;
+
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use log::debug;
 use serde::Serialize;
@@ -12,6 +14,8 @@ pub enum Error {
     Store(#[from] store::Error),
     #[error("Unauthorized")]
     Unauthorized,
+    #[error(transparent)]
+    VarError(#[from] VarError),
 }
 
 #[derive(Serialize)]
@@ -39,7 +43,7 @@ impl IntoResponse for Error {
                     "Internal Server Error".to_string(),
                 ),
             },
-            Self::Cfg(_) => (
+            Self::Cfg(_) | Self::VarError(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_string(),
             ),

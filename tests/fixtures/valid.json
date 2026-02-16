@@ -1,5 +1,9 @@
 {
   "lease_size": 100,
+  "cleanup": {
+    "enabled": true,
+    "interval": 5
+  },
   "protected": {
     "criteria": "sub",
     "quota": 10000,
