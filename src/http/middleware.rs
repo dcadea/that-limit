@@ -9,7 +9,7 @@ use axum::{
     response::Response,
 };
 
-use crate::{bucket, error, store::Store};
+use crate::core::{bucket, store::Store};
 
 #[derive(Clone)]
 struct ClientIp(IpAddr);
@@ -23,7 +23,7 @@ pub async fn extract_ip(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
-) -> crate::Result<Response> {
+) -> super::Result<Response> {
     if headers.get(USER_ID).is_some() {
         return Ok(next.run(request).await);
     }
@@ -46,7 +46,7 @@ pub async fn extract_identifier(
     headers: HeaderMap,
     mut request: Request<Body>,
     next: Next,
-) -> crate::Result<Response> {
+) -> super::Result<Response> {
     let protected = headers
         .get(USER_ID)
         .and_then(|id| id.to_str().ok())
@@ -64,7 +64,7 @@ pub async fn extract_identifier(
             request.extensions_mut().insert(id);
             Ok(next.run(request).await)
         }
-        None => Err(error::Error::Unauthorized),
+        None => Err(super::Error::Unauthorized),
     }
 }
 
@@ -73,7 +73,7 @@ pub async fn lease_tokens(
     store: State<Arc<Store>>,
     request: Request<Body>,
     next: Next,
-) -> crate::Result<Response> {
+) -> super::Result<Response> {
     if store.check(&b_id)? {
         return Ok(next.run(request).await);
     }

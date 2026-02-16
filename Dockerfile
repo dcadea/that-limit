@@ -3,7 +3,7 @@ LABEL authors="dcadea"
 
 WORKDIR /usr/src/that-limit
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --features http
 
 FROM debian:bookworm-slim
 LABEL authors="dcadea"

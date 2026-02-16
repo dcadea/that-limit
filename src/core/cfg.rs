@@ -5,6 +5,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_with::{DurationSeconds, serde_as};
 
+type Result<T> = std::result::Result<T, Error>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -65,6 +67,12 @@ pub struct Config {
     pub public: Criteria,
 }
 
+pub fn get(path: &str) -> Result<Config> {
+    let content = fs::read(path)?;
+    let config = serde_json::from_slice(&content)?;
+    Ok(config)
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -86,7 +94,7 @@ impl Default for Config {
 }
 
 #[cfg(test)]
-use crate::bucket;
+use crate::core::bucket;
 
 #[cfg(test)]
 impl Config {
@@ -137,12 +145,6 @@ impl Config {
             bucket::Id::Protected(_) => self.protected.reset_in(),
         }
     }
-}
-
-pub fn get(path: &str) -> Result<Config, Error> {
-    let content = fs::read(path)?;
-    let config = serde_json::from_slice(&content)?;
-    Ok(config)
 }
 
 #[cfg(test)]

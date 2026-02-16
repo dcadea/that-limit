@@ -33,8 +33,8 @@ dev-down compose_file="docker-compose.dev.yml":
     docker compose -f {{ compose_file }} down
 
 # Start dependencies in Docker + run Rust app with hot reload
-dev: dev-up
-    RUST_LOG=trace cargo watch -x run -w src
+dev feature="http": dev-up
+    RUST_LOG=trace cargo watch -x run -w src --features {{ feature }}
 
 # Run pedantic linter
 clippy:
@@ -47,5 +47,5 @@ clippy:
 # Run tests with coverage
 cov:
     cargo llvm-cov \
-        --ignore-filename-regex ".*/src/bootstrap.rs|.*/src/main.rs" \
+        --ignore-filename-regex ".*/bootstrap.rs|.*/src/main.rs" \
         --open

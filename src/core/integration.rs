@@ -10,7 +10,7 @@ pub mod cache {
     use log::warn;
     use redis::RedisError;
 
-    use crate::bucket;
+    use crate::core::bucket;
 
     pub type Result<T> = std::result::Result<T, Error>;
 
