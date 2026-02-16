@@ -5,15 +5,10 @@ pub enum Command {
 }
 
 pub mod cache {
-    use std::{
-        env,
-        fmt::{Display, Formatter},
-        net::IpAddr,
-        time::Duration,
-    };
+    use std::{env, fmt::Debug};
 
-    use log::{error, trace, warn};
-    use redis::{AsyncCommands, RedisError};
+    use log::warn;
+    use redis::RedisError;
 
     use crate::bucket;
 
@@ -33,40 +28,20 @@ pub mod cache {
         NotFound(String),
     }
 
-    #[derive(Clone, Debug)]
-    pub enum Key<'a> {
-        Sub(&'a str),
-        Ip(IpAddr),
-    }
-
-    impl Display for Key<'_> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match self {
-                Self::Sub(sub) => write!(f, "sub:{sub}"),
-                Self::Ip(ip) => write!(f, "ip:{ip}"),
-            }
-        }
-    }
-
-    impl redis::ToRedisArgs for Key<'_> {
+    impl redis::ToRedisArgs for bucket::Id {
         fn write_redis_args<W>(&self, out: &mut W)
         where
             W: ?Sized + redis::RedisWrite,
         {
-            self.to_string().write_redis_args(out);
-        }
-    }
-
-    impl redis::ToSingleRedisArg for Key<'_> {}
-
-    impl<'a> From<&'a bucket::Id> for Key<'a> {
-        fn from(id: &'a bucket::Id) -> Self {
-            match id {
-                bucket::Id::Public(ip) => Self::Ip(*ip),
-                bucket::Id::Protected(sub) => Self::Sub(sub),
+            match self {
+                Self::Public(ip) => format!("ip:{ip}"),
+                Self::Protected(sub) => format!("sub:{sub}"),
             }
+            .write_redis_args(out);
         }
     }
+
+    impl redis::ToSingleRedisArg for bucket::Id {}
 
     #[derive(Clone)]
     pub struct Config {
@@ -113,77 +88,6 @@ pub mod cache {
         }
     }
 
-    #[derive(Clone)]
-    pub struct Redis {
-        con: redis::aio::ConnectionManager,
-    }
-
-    impl Redis {
-        pub async fn set_ex<V>(&self, key: &Key<'_>, value: V, ttl: Duration) -> Result<()>
-        where
-            V: redis::ToSingleRedisArg + Send + Sync,
-        {
-            trace!("SET_EX -> {key:?}");
-            let mut con = self.con.clone();
-            con.set_ex::<_, _, ()>(&key, value, ttl.as_secs()).await?;
-            Ok(())
-        }
-
-        pub async fn get<V>(&self, key: &Key<'_>) -> Result<V>
-        where
-            V: redis::FromRedisValue,
-        {
-            let mut con = self.con.clone();
-            match con.get::<_, Option<V>>(&key).await {
-                Ok(value) => {
-                    let status = if value.is_some() { "Hit" } else { "Miss" };
-                    trace!("GET ({status}) -> {key:?}");
-
-                    value.ok_or(Error::NotFound(key.to_string()))
-                }
-                Err(e) => {
-                    error!("Failed to GET on {key:?}. Reason: {e:?}");
-                    Err(Error::from(e))
-                }
-            }
-        }
-
-        pub async fn ttl(&self, key: &Key<'_>) -> Result<Duration> {
-            let mut con = self.con.clone();
-            trace!("TTL -> {key:?}");
-            match con.ttl::<_, i64>(key).await {
-                Ok(ttl) if ttl > 0 => Ok(Duration::from_secs(ttl.cast_unsigned())),
-                Ok(v) => {
-                    if v == -1 {
-                        warn!("Key {key:?} has no expiration");
-                        Err(Error::NoExpiration(key.to_string()))
-                    } else if v == -2 {
-                        warn!("Key {key:?} does not exist");
-                        Err(Error::KeyDoesNotExist(key.to_string()))
-                    } else {
-                        error!("Invalid TTL: {v} for key {key:?}");
-                        Err(Error::Unexpected("Invalid TTL value".to_string()))
-                    }
-                }
-                Err(e) => Err(Error::from(e)),
-            }
-        }
-
-        pub async fn incr(&self, key: &Key<'_>, delta: u64) -> Result<()> {
-            let mut con = self.con.clone();
-            trace!("INCR -> {key:?}");
-            con.incr::<_, _, u64>(key, delta).await?;
-            Ok(())
-        }
-
-        pub async fn decr(&self, key: &Key<'_>, delta: u64) -> Result<()> {
-            let mut con = self.con.clone();
-            trace!("DECR -> {key:?}");
-            con.decr::<_, _, u64>(key, delta).await?;
-            Ok(())
-        }
-    }
-
     #[cfg(test)]
     mod test {
         use super::*;
@@ -191,6 +95,206 @@ pub mod cache {
         impl Config {
             pub fn test(host: String, port: u16) -> Self {
                 Self { host, port }
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct Redis {
+        con: redis::aio::ConnectionManager,
+    }
+
+    impl Redis {
+        pub async fn execute<A>(&self, action: A) -> Result<A::Output>
+        where
+            A: action::Action,
+        {
+            action.execute(&mut self.con.clone()).await
+        }
+    }
+
+    pub mod action {
+        use std::{fmt::Debug, marker::PhantomData, time::Duration};
+
+        use log::{error, trace, warn};
+        use redis::AsyncCommands;
+
+        pub trait Action {
+            type Output;
+
+            #[allow(async_fn_in_trait)]
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output>;
+        }
+
+        pub struct SetEx<K, V> {
+            key: K,
+            value: V,
+            ttl: Duration,
+        }
+
+        pub struct Get<K, R> {
+            key: K,
+            _r: PhantomData<R>,
+        }
+
+        pub struct Ttl<K> {
+            key: K,
+        }
+
+        pub struct Incr<K> {
+            key: K,
+            delta: u64,
+        }
+
+        pub struct Decr<K> {
+            key: K,
+            delta: u64,
+        }
+
+        impl<K, V> SetEx<K, V> {
+            pub const fn new(key: K, value: V, ttl: Duration) -> Self {
+                Self { key, value, ttl }
+            }
+        }
+
+        impl<K, R> Get<K, R> {
+            pub const fn new(key: K) -> Self {
+                Self {
+                    key,
+                    _r: PhantomData,
+                }
+            }
+        }
+
+        impl<K> Ttl<K> {
+            pub const fn new(key: K) -> Self {
+                Self { key }
+            }
+        }
+
+        impl<K> Incr<K> {
+            pub const fn new(key: K, delta: u64) -> Self {
+                Self { key, delta }
+            }
+        }
+
+        impl<K> Decr<K> {
+            pub const fn new(key: K, delta: u64) -> Self {
+                Self { key, delta }
+            }
+        }
+
+        impl<K, V> Action for SetEx<K, V>
+        where
+            K: redis::ToSingleRedisArg + Sync + Debug,
+            V: redis::ToSingleRedisArg + Send + Sync,
+        {
+            type Output = ();
+
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output> {
+                let key = self.key;
+                trace!("SET_EX -> {key:?}");
+                con.set_ex::<_, _, ()>(&key, self.value, self.ttl.as_secs())
+                    .await?;
+                Ok(())
+            }
+        }
+
+        impl<K, R> Action for Get<K, R>
+        where
+            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
+            R: redis::FromRedisValue,
+        {
+            type Output = R;
+
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output> {
+                let key = self.key;
+                match con.get::<_, Option<Self::Output>>(&key).await {
+                    Ok(value) => {
+                        let status = if value.is_some() { "Hit" } else { "Miss" };
+                        trace!("GET ({status}) -> {key:?}");
+
+                        value.ok_or(super::Error::NotFound(key.to_string()))
+                    }
+                    Err(e) => {
+                        error!("Failed to GET on {key:?}. Reason: {e:?}");
+                        Err(super::Error::from(e))
+                    }
+                }
+            }
+        }
+
+        impl<K> Action for Ttl<K>
+        where
+            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
+        {
+            type Output = Duration;
+
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output> {
+                let key = self.key;
+                trace!("TTL -> {key:?}");
+                match con.ttl::<_, i64>(&key).await {
+                    Ok(ttl) if ttl > 0 => Ok(Duration::from_secs(ttl.cast_unsigned())),
+                    Ok(v) => {
+                        if v == -1 {
+                            warn!("Key {key:?} has no expiration");
+                            Err(super::Error::NoExpiration(key.to_string()))
+                        } else if v == -2 {
+                            warn!("Key {key:?} does not exist");
+                            Err(super::Error::KeyDoesNotExist(key.to_string()))
+                        } else {
+                            error!("Invalid TTL: {v} for key {key:?}");
+                            Err(super::Error::Unexpected("Invalid TTL value".to_string()))
+                        }
+                    }
+                    Err(e) => Err(super::Error::from(e)),
+                }
+            }
+        }
+
+        impl<K> Action for Incr<K>
+        where
+            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
+        {
+            type Output = ();
+
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output> {
+                let key = self.key;
+                trace!("INCR -> {key:?}");
+                con.incr::<_, _, u64>(&key, self.delta).await?;
+                Ok(())
+            }
+        }
+
+        impl<K> Action for Decr<K>
+        where
+            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
+        {
+            type Output = ();
+
+            async fn execute(
+                self,
+                con: &mut redis::aio::ConnectionManager,
+            ) -> super::Result<Self::Output> {
+                let key = self.key;
+                trace!("DECR -> {key:?}");
+                con.decr::<_, _, u64>(&key, self.delta).await?;
+                Ok(())
             }
         }
     }
