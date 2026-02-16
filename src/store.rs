@@ -14,7 +14,13 @@ use tokio::sync::broadcast::Sender;
 use crate::{
     bucket::{self, Bucket},
     cfg::Config,
-    integration::{Command, cache},
+    integration::{
+        Command,
+        cache::{
+            self,
+            action::{Decr, Get, Incr, SetEx, Ttl},
+        },
+    },
 };
 use futures::future::join_all;
 
@@ -91,8 +97,7 @@ impl Store {
 
                                     async move {
                                         for (key, tokens_left) in chunk {
-                                            let key = cache::Key::from(key);
-                                            if let Err(e) = redis.incr(&key, *tokens_left).await {
+                                            if let Err(e) = redis.execute(Incr::new(key.clone(), *tokens_left)).await {
                                                 error!("Could not return left tokens for: {key:?}, {e:?}");
                                             }
                                         }
@@ -151,9 +156,7 @@ impl Store {
     }
 
     pub async fn lease(&self, b_id: bucket::Id) -> Result<()> {
-        let key = cache::Key::from(&b_id);
-
-        let tokens: cache::Result<u64> = self.redis.get(&key).await;
+        let tokens: cache::Result<u64> = self.redis.execute(Get::new(b_id.clone())).await;
 
         let lease_size = self.config.lease_size;
         let (leased, ttl) = match tokens {
@@ -162,9 +165,9 @@ impl Store {
             Ok(tokens) => {
                 let leased = min(tokens, lease_size);
 
-                self.redis.decr(&key, leased).await?;
+                self.redis.execute(Decr::new(b_id.clone(), leased)).await?;
 
-                let ttl = self.redis.ttl(&key).await?;
+                let ttl = self.redis.execute(Ttl::new(b_id.clone())).await?;
                 (leased, ttl)
             }
 
@@ -180,7 +183,7 @@ impl Store {
                 let ttl = criteria.reset_in();
 
                 self.redis
-                    .set_ex(&key, criteria.quota() - lease_size, ttl)
+                    .execute(SetEx::new(b_id.clone(), criteria.quota() - lease_size, ttl))
                     .await?;
 
                 (lease_size, ttl)
@@ -273,7 +276,7 @@ mod test {
 
         let (shutdown_tx, _) = broadcast::channel::<Command>(10);
 
-        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx));
+        let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx));
 
         let valera = bucket::Id::Protected("valera".to_string());
         let jora = bucket::Id::Protected("jora".to_string());
@@ -319,7 +322,7 @@ mod test {
             tx_clone.send(Command::Shutdown).unwrap();
         });
 
-        let store = Store::new(cfg.clone(), redis, Some(shutdown_tx.clone()));
+        let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx.clone()));
 
         let valera = bucket::Id::Protected("valera".to_string());
         let jora = bucket::Id::Protected("jora".to_string());
@@ -339,7 +342,19 @@ mod test {
         assert!(store.check(&jora).unwrap());
         assert!(store.check(&public).unwrap());
 
-        // TODO: check that leased tokens were returned to redis
+        // tokens should return to redis
+        assert_eq!(
+            cfg.protected.quota(),
+            redis.execute(Get::<_, u64>::new(valera)).await.unwrap()
+        );
+        assert_eq!(
+            cfg.protected.quota(),
+            redis.execute(Get::<_, u64>::new(jora)).await.unwrap()
+        );
+        assert_eq!(
+            cfg.public.quota(),
+            redis.execute(Get::<_, u64>::new(public)).await.unwrap()
+        )
     }
 }
 
