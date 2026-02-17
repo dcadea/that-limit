@@ -19,14 +19,15 @@ cargo build         # Build the project
 ```
 
 ### Running and testing
+Service provides two features: `grpc` and `http`. Each respective feature will serve either http or grpc backend. At least one feature should be enabled. If no features are specified, service will default to `http`.
 ```bash
-cargo run           # Run the project
-cargo watch -x run  # Run the project with hot-reload
-                    # (req: `cargo install cargo-watch`)
-cargo test          # Run the tests
+cargo run --features http   # Run the project
+cargo watch -x run          # Run the project with hot-reload
+                            # (req: `cargo install cargo-watch`)
+cargo test                  # Run the tests
 
-just clippy         # Run pedantic linter
-just cov            # Run tests with coverage
+just clippy                 # Run pedantic linter
+just cov                    # Run tests with coverage
 ```
 Optionally you can run the project with `cargo run --release` to enable optimizations.<br>
 To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run`.<br>
@@ -47,7 +48,7 @@ Available recipes:
     clippy                                         # Run pedantic linter
     cov                                            # Run tests with coverage
     default
-    dev                                            # Start dependencies in Docker + run Rust app with hot reload
+    dev feature="http"                             # Start dependencies in Docker + run Rust app with hot reload
     dev-down compose_file="docker-compose.dev.yml" # Stop Docker dependencies
     dev-up compose_file="docker-compose.dev.yml"   # Start dependencies in Docker (redis, etc)
     minikube-build image="that-limit:dev"          # Build a Docker image inside the minikube env

@@ -47,5 +47,6 @@ clippy:
 # Run tests with coverage
 cov:
     cargo llvm-cov \
+        --all-features \
         --ignore-filename-regex ".*/bootstrap.rs|.*/src/main.rs" \
         --open
