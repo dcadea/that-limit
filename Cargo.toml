@@ -3,20 +3,34 @@ name = "that-limit"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+default = ["http"]
+http = ["axum"]
+grpc = ["prost", "tonic", "envoy-types"]
+
+
 [dependencies]
-log = "0.4.29"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "fs", "signal"] }
-tower = "0.5.3"
-serde = { version= "1.0.228", features = ["derive"] }
-axum = "0.8.8"
-dashmap = "6.1.0"
-serde_json = "1.0.149"
-redis = { version = "1.0.3", features = ["connection-manager", "tokio-comp"] }
-serde_with = { version = "3.16.1", features = ["time_0_3"] }
-simplelog = "0.12.2"
-futures = "0.3"
-thiserror = "2.0.18"
 dotenv = "0.15.0"
+log = "0.4.29"
+simplelog = "0.12.2"
+thiserror = "2.0.18"
+dashmap = "6.1.0"
+
+futures = "0.3"
+tower = "0.5.3"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "fs", "signal"] }
+
+serde = { version= "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_with = { version = "3.16.1", features = ["time_0_3"] }
+
+redis = { version = "1.0.3", features = ["connection-manager", "tokio-comp"] }
+
+axum = { version = "0.8.8", optional = true }
+prost = { version = "0.14.3", optional = true }
+tonic = { version = "0.14.4", optional = true }
+envoy-types = { version = "0.7.2", optional = true }
 
 
 [dev-dependencies]
