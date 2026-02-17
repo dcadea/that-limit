@@ -50,8 +50,8 @@ impl App {
     pub async fn run(&self) {
         #[cfg(all(feature = "grpc", feature = "http"))]
         tokio::select! {
-            _ = self.run_grpc() => {}
-            _ = self.run_http() => {}
+            () = self.run_grpc() => {}
+            () = self.run_http() => {}
         }
 
         #[cfg(all(feature = "grpc", not(feature = "http")))]
