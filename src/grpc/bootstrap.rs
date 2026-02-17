@@ -3,7 +3,10 @@ use std::env;
 use envoy_types::pb::envoy::service::ratelimit::v3::rate_limit_service_server::RateLimitServiceServer;
 use tonic::transport::Server;
 
-use crate::{bootstrap::App, grpc::store};
+use crate::{
+    bootstrap::{App, shutdown_signal},
+    grpc::store,
+};
 
 impl App {
     pub async fn run_grpc(&self) {
@@ -16,7 +19,7 @@ impl App {
             .add_service(RateLimitServiceServer::new(store::Service::new(
                 self.store().clone(),
             )))
-            .serve(addr)
+            .serve_with_shutdown(addr, shutdown_signal(self.shutdown_tx.clone()))
             .await
         {
             panic!("Failed to start application: {e:?}")

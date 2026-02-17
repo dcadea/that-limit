@@ -160,8 +160,12 @@ impl Store {
 
         let lease_size = self.config.lease_size;
         let (leased, ttl) = match tokens {
-            // We'll respond with 429 when cannot lease from cache anymore
-            Ok(0) => return Err(Error::Exhausted(b_id)),
+            Ok(0) => {
+                // At this point redis bucket is also exhausted
+                // Explicitly mark local bucket as exhausted to avoid unnecessary round trip
+                self.mark_as_exhausted(&b_id)?;
+                return Err(Error::Exhausted(b_id));
+            }
             Ok(tokens) => {
                 let leased = min(tokens, lease_size);
 
@@ -226,8 +230,12 @@ impl Store {
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
         match self.buckets.try_get(b_id) {
             Present(b) => {
-                if b.tokens == 0 {
+                if b.exhausted {
                     debug!("Bucket {b_id} is exhausted");
+                    return Err(Error::Exhausted(b_id.clone()));
+                }
+
+                if b.tokens == 0 {
                     return Ok(false);
                 }
 
@@ -235,6 +243,20 @@ impl Store {
                 Ok(true)
             }
             Absent => Ok(false),
+            Locked => Err(Error::Locked(b_id.clone())),
+        }
+    }
+
+    fn mark_as_exhausted(&self, b_id: &bucket::Id) -> Result<()> {
+        match self.buckets.try_get_mut(b_id) {
+            Present(mut b) => {
+                if !b.exhausted {
+                    b.exhausted = true;
+                }
+
+                Ok(())
+            }
+            Absent => Ok(()),
             Locked => Err(Error::Locked(b_id.clone())),
         }
     }

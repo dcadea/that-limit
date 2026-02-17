@@ -2,8 +2,8 @@ use log::debug;
 
 use crate::core;
 
-pub mod bootstrap;
-pub mod store;
+mod bootstrap;
+mod store;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

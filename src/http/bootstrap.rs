@@ -10,7 +10,7 @@ use log::info;
 use tower::ServiceBuilder;
 
 use crate::{
-    bootstrap::App,
+    bootstrap::{App, shutdown_signal},
     http::{
         middleware::{extract_identifier, extract_ip, lease_tokens},
         state, store,
@@ -36,10 +36,7 @@ pub fn init_router(s: state::AppState) -> Router {
 }
 
 impl App {
-    pub async fn run_http<F>(&self, shutdown_signal: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
+    pub async fn run_http(&self) {
         let port = env::var("HTTP_PORT").unwrap_or_else(|_| "8000".to_string());
         let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await {
             Ok(l) => l,
@@ -55,7 +52,7 @@ impl App {
             listener,
             r.into_make_service_with_connect_info::<SocketAddr>(),
         )
-        .with_graceful_shutdown(shutdown_signal)
+        .with_graceful_shutdown(shutdown_signal(self.shutdown_tx.clone()))
         .await
         {
             panic!("Failed to start application: {e:?}")

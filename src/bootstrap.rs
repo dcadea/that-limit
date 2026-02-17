@@ -16,7 +16,7 @@ use crate::core::{
 use dotenv::dotenv;
 
 pub struct App {
-    shutdown_tx: Option<Sender<Command>>,
+    pub shutdown_tx: Option<Sender<Command>>,
     store: Arc<Store>,
 }
 
@@ -48,12 +48,17 @@ impl App {
     }
 
     pub async fn run(&self) {
-        #[cfg(feature = "grpc")]
+        #[cfg(all(feature = "grpc", feature = "http"))]
+        tokio::select! {
+            _ = self.run_grpc() => {}
+            _ = self.run_http() => {}
+        }
+
+        #[cfg(all(feature = "grpc", not(feature = "http")))]
         self.run_grpc().await;
 
-        #[cfg(feature = "http")]
-        self.run_http(shutdown_signal(self.shutdown_tx.clone()))
-            .await;
+        #[cfg(all(feature = "http", not(feature = "grpc")))]
+        self.run_http().await;
     }
 }
 
@@ -85,7 +90,7 @@ pub fn init_test_logger() {
     }
 }
 
-async fn shutdown_signal(tx: Option<Sender<Command>>) {
+pub async fn shutdown_signal(tx: Option<Sender<Command>>) {
     if let Some(tx) = tx {
         let mut rx = tx.subscribe();
         #[cfg(unix)]

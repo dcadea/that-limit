@@ -27,12 +27,17 @@ impl Display for Id {
 pub(super) struct Bucket {
     pub tokens: u64,
     pub expires_at: SystemTime,
+    pub exhausted: bool,
 }
 
 impl Bucket {
     pub fn new(tokens: u64, ttl: Duration) -> Self {
         let expires_at = SystemTime::now().add(ttl);
 
-        Self { tokens, expires_at }
+        Self {
+            tokens,
+            expires_at,
+            exhausted: false,
+        }
     }
 }
