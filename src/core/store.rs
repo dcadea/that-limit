@@ -4,10 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use dashmap::{
-    DashMap,
-    try_result::TryResult::{Absent, Locked, Present},
-};
+use dashmap::DashMap;
 use log::{debug, error};
 use tokio::sync::broadcast::Sender;
 
@@ -30,8 +27,6 @@ type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("Bucket {0} is exhausted")]
     Exhausted(bucket::Id),
-    #[error("Bucket {0} is locked, too many concurrent calls")]
-    Locked(bucket::Id),
     #[error(transparent)]
     Cache(#[from] cache::Error),
 }
@@ -205,9 +200,11 @@ impl Store {
     }
 
     pub fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
-        match self.buckets.try_get_mut(b_id) {
-            Present(mut b) => {
-                if b.expires_at <= SystemTime::now() {
+        let now = SystemTime::now();
+
+        match self.buckets.get_mut(b_id) {
+            Some(mut b) => {
+                if b.expires_at <= now {
                     debug!("Bucket {b_id} expired, cleaning up");
                     drop(b);
                     self.buckets.remove(b_id);
@@ -222,14 +219,13 @@ impl Store {
                 debug!("Tokens for {b_id} left: {}", b.tokens);
                 Ok(b.tokens)
             }
-            Absent => Ok(0),
-            Locked => Err(Error::Locked(b_id.clone())),
+            None => Ok(0),
         }
     }
 
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
-        match self.buckets.try_get(b_id) {
-            Present(b) => {
+        match self.buckets.get(b_id) {
+            Some(b) => {
                 if b.exhausted {
                     debug!("Bucket {b_id} is exhausted");
                     return Err(Error::Exhausted(b_id.clone()));
@@ -242,22 +238,20 @@ impl Store {
                 debug!("Tokens for {b_id} left: {}", b.tokens);
                 Ok(true)
             }
-            Absent => Ok(false),
-            Locked => Err(Error::Locked(b_id.clone())),
+            None => Ok(false),
         }
     }
 
     fn mark_as_exhausted(&self, b_id: &bucket::Id) -> Result<()> {
-        match self.buckets.try_get_mut(b_id) {
-            Present(mut b) => {
+        match self.buckets.get_mut(b_id) {
+            Some(mut b) => {
                 if !b.exhausted {
                     b.exhausted = true;
                 }
 
                 Ok(())
             }
-            Absent => Ok(()),
-            Locked => Err(Error::Locked(b_id.clone())),
+            None => Ok(()),
         }
     }
 }

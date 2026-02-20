@@ -31,7 +31,6 @@ impl From<core::store::Error> for tonic::Status {
             core::store::Error::Exhausted(id) => {
                 Self::resource_exhausted(format!("Identity: {id} consumed all tokens"))
             }
-            core::store::Error::Locked(id) => Self::internal(format!("Identity: {id} is locked")),
             core::store::Error::Cache(_) => Self::internal("Internal Server Error"),
         }
     }

@@ -37,10 +37,6 @@ impl IntoResponse for Error {
                     StatusCode::TOO_MANY_REQUESTS,
                     format!("Identity: {id} consumed all tokens"),
                 ),
-                core::store::Error::Locked(id) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Identity: {id} is locked"),
-                ),
                 core::store::Error::Cache(_) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Internal Server Error".to_string(),
