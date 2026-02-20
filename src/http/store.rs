@@ -15,13 +15,13 @@ pub struct ConsumeResponse {
 pub async fn consume(
     Extension(bucket_id): Extension<bucket::Id>,
     store: State<Arc<Store>>,
-) -> super::Result<Json<ConsumeResponse>> {
-    let tokens_left = store.consume(&bucket_id)?;
+) -> Json<ConsumeResponse> {
+    let tokens_left = store.consume(&bucket_id);
 
-    Ok(Json(ConsumeResponse {
+    Json(ConsumeResponse {
         bucket_id,
         tokens_left,
-    }))
+    })
 }
 
 #[cfg(test)]

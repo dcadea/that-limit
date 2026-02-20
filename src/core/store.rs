@@ -1,8 +1,4 @@
-use std::{
-    cmp::min,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{cmp::min, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 use log::{debug, error};
@@ -70,13 +66,12 @@ impl Store {
                                 break;
                             }
 
-                            let now = SystemTime::now();
                             let replenish: Vec<_> = s_clone
                                 .buckets
                                 .iter()
-                                .filter(|e| e.tokens > 0)
-                                .filter(|e| e.expires_at > now)
-                                .map(|e| (e.key().clone(), e.value().tokens))
+                                .filter(|e| !e.is_empty())
+                                .filter(|e| !e.is_expired())
+                                .map(|e| (e.key().clone(), e.value().tokens()))
                                 .collect();
 
                             if replenish.is_empty() {
@@ -110,11 +105,10 @@ impl Store {
 
                             debug!("Cleanup tick");
 
-                            let now = SystemTime::now();
                             let expired_keys: Vec<_> = s_clone
                                 .buckets
                                 .iter()
-                                .filter(|e| e.value().expires_at <= now)
+                                .filter(|e| e.value().is_expired())
                                 .map(|e| e.key().clone())
                                 .collect();
 
@@ -158,7 +152,7 @@ impl Store {
             Ok(0) => {
                 // At this point redis bucket is also exhausted
                 // Explicitly mark local bucket as exhausted to avoid unnecessary round trip
-                self.mark_as_exhausted(&b_id)?;
+                self.mark_as_exhausted(&b_id);
                 return Err(Error::Exhausted(b_id));
             }
             Ok(tokens) => {
@@ -199,59 +193,46 @@ impl Store {
         self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> Result<u64> {
-        let now = SystemTime::now();
-
-        match self.buckets.get_mut(b_id) {
-            Some(mut b) => {
-                if b.expires_at <= now {
-                    debug!("Bucket {b_id} expired, cleaning up");
-                    drop(b);
-                    self.buckets.remove(b_id);
-                    return Ok(0);
-                }
-
-                if b.tokens > 0 {
-                    debug!("Consuming token from {b_id}");
-                    b.tokens -= 1;
-                }
-
-                debug!("Tokens for {b_id} left: {}", b.tokens);
-                Ok(b.tokens)
+    pub fn consume(&self, b_id: &bucket::Id) -> u64 {
+        if let Some(b) = self.buckets.get(b_id) {
+            if b.is_expired() {
+                debug!("Bucket {b_id} expired, cleaning up");
+                drop(b);
+                self.buckets.remove(b_id);
+                return 0;
             }
-            None => Ok(0),
+
+            debug!("Consuming token from {b_id}");
+            let tokens_left = b.consume();
+
+            debug!("Tokens for {b_id} left: {tokens_left}");
+            return tokens_left;
         }
+        0
     }
 
     pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
         match self.buckets.get(b_id) {
             Some(b) => {
-                if b.exhausted {
+                if b.is_exhausted() {
                     debug!("Bucket {b_id} is exhausted");
                     return Err(Error::Exhausted(b_id.clone()));
                 }
 
-                if b.tokens == 0 {
+                if b.is_empty() {
                     return Ok(false);
                 }
 
-                debug!("Tokens for {b_id} left: {}", b.tokens);
+                debug!("Tokens for {b_id} left: {}", b.tokens());
                 Ok(true)
             }
             None => Ok(false),
         }
     }
 
-    fn mark_as_exhausted(&self, b_id: &bucket::Id) -> Result<()> {
-        match self.buckets.get_mut(b_id) {
-            Some(mut b) => {
-                if !b.exhausted {
-                    b.exhausted = true;
-                }
-
-                Ok(())
-            }
-            None => Ok(()),
+    fn mark_as_exhausted(&self, b_id: &bucket::Id) {
+        if let Some(b) = self.buckets.get(b_id) {
+            b.set_exhausted();
         }
     }
 }

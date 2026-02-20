@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Add,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
 
@@ -25,9 +26,9 @@ impl Display for Id {
 
 #[derive(Debug)]
 pub(super) struct Bucket {
-    pub tokens: u64,
-    pub expires_at: SystemTime,
-    pub exhausted: bool,
+    tokens: AtomicU64,
+    expires_at: SystemTime,
+    exhausted: AtomicBool,
 }
 
 impl Bucket {
@@ -35,9 +36,46 @@ impl Bucket {
         let expires_at = SystemTime::now().add(ttl);
 
         Self {
-            tokens,
+            tokens: AtomicU64::new(tokens),
             expires_at,
-            exhausted: false,
+            exhausted: AtomicBool::new(false),
         }
+    }
+
+    pub fn tokens(&self) -> u64 {
+        self.tokens.load(Ordering::Relaxed)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tokens.load(Ordering::Relaxed) == 0
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.expires_at <= SystemTime::now()
+    }
+
+    pub fn set_exhausted(&self) {
+        self.exhausted.store(true, Ordering::Release);
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.exhausted.load(Ordering::Acquire)
+    }
+
+    pub fn consume(&self) -> u64 {
+        let mut current = self.tokens.load(Ordering::Relaxed);
+
+        while current > 0 {
+            if self
+                .tokens
+                .compare_exchange(current, current - 1, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return current - 1;
+            }
+            current = self.tokens.load(Ordering::Relaxed);
+        }
+
+        0
     }
 }
