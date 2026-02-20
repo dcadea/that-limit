@@ -1,5 +1,5 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
-use log::debug;
+use log::error;
 use serde::Serialize;
 
 use crate::core;
@@ -28,7 +28,7 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
-        debug!("Mapping error to HTTP response: {self:?}");
+        error!("Mapping error to HTTP response: {self:?}");
 
         let (status, error_message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),

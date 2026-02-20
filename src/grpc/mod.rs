@@ -1,4 +1,4 @@
-use log::debug;
+use log::error;
 
 use crate::core;
 
@@ -15,7 +15,7 @@ pub enum Error {
 
 impl From<Error> for tonic::Status {
     fn from(e: Error) -> Self {
-        debug!("Mapping error to gRPC response: {e:?}");
+        error!("Mapping error to gRPC response: {e:?}");
 
         match e {
             Error::Unauthorized => Self::unauthenticated("unauthenticated"),
@@ -25,7 +25,7 @@ impl From<Error> for tonic::Status {
 
 impl From<core::store::Error> for tonic::Status {
     fn from(e: core::store::Error) -> Self {
-        debug!("Mapping error to gRPC response: {e:?}");
+        error!("Mapping error to gRPC response: {e:?}");
 
         match e {
             core::store::Error::Exhausted(id) => {
