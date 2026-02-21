@@ -31,7 +31,7 @@ impl RateLimitService for Service {
             self.store.lease(b_id.clone()).await?;
         }
 
-        let tokens_left = self.store.consume(&b_id)?;
+        let tokens_left = self.store.consume(&b_id);
 
         let response = RateLimitResponse {
             overall_code: if tokens_left > 0 {

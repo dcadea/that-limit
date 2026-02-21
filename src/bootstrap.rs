@@ -93,30 +93,38 @@ pub fn init_test_logger() {
 pub async fn shutdown_signal(tx: Option<Sender<Command>>) {
     if let Some(tx) = tx {
         let mut rx = tx.subscribe();
+
         #[cfg(unix)]
-        let unix_signal = async {
-            use tokio::signal;
+        {
+            let unix_signal = async {
+                use tokio::signal;
 
-            match signal::unix::signal(signal::unix::SignalKind::terminate()) {
-                Ok(mut sigterm) => {
-                    sigterm.recv().await;
+                match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                    Ok(mut sigterm) => {
+                        sigterm.recv().await;
+                    }
+                    Err(e) => {
+                        error!("Failed to listen for SIGTERM: {e}");
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to listen for SIGTERM: {e}");
-                }
-            }
-        };
+            };
 
-        tokio::select! {
-            _ = signal::ctrl_c() => {
-                debug!("Ctrl-C received, shutting down...");
-            },
-            () = unix_signal => {
-                debug!("SIGTERM received, shutting down...");
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    debug!("Ctrl-C received, shutting down...");
+                },
+                () = unix_signal => {
+                    debug!("SIGTERM received, shutting down...");
+                }
             }
         }
 
-        debug!("Shutdown signal received");
+        #[cfg(not(unix))]
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                debug!("Ctrl-C received, shutting down...");
+            }
+        }
 
         let _ = tx.send(Command::Shutdown);
 
