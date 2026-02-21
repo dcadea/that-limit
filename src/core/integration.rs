@@ -281,6 +281,18 @@ pub mod cache {
             }
         }
 
+        /// To avoid race conditions when multiple instances
+        /// try to decrement same key, lua script is used which
+        /// performs atomic operation and solves CAS (Check-And-Set) problem
+        const DECR_SCRIPT: &str = r#"
+            local current = tonumber(redis.call('GET', KEYS[1]) or "0")
+            local decr_by = tonumber(ARGV[1])
+
+            if current >= decr_by then
+                return redis.call('DECRBY', KEYS[1], decr_by)
+            end
+        "#;
+
         impl<K> Action for Decr<K>
         where
             K: redis::ToSingleRedisArg + Sync + Debug + ToString,
@@ -293,7 +305,13 @@ pub mod cache {
             ) -> super::Result<Self::Output> {
                 let key = self.key;
                 trace!("DECR -> {key:?}");
-                con.decr::<_, _, u64>(&key, self.delta).await?;
+
+                redis::Script::new(DECR_SCRIPT)
+                    .key(key)
+                    .arg(self.delta)
+                    .invoke_async::<u64>(con)
+                    .await?;
+
                 Ok(())
             }
         }
