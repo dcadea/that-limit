@@ -95,5 +95,5 @@ REDIS_PORT=6379
 
 ### Stress test with wrk
 ```bash
-wrk -t4 -c100 -d30s -s ./tests/performance/protected.lua http://127.0.0.1:8000/consume
+wrk -t4 -c150 -d30s -s ./tests/performance/protected.lua http://127.0.0.1:8000/consume
 ```
