@@ -1,8 +1,8 @@
-use std::{cmp::min, sync::Arc, time::Duration};
+use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 use log::{debug, error};
-use tokio::sync::broadcast::Sender;
+use tokio::sync::{Mutex, Notify, broadcast::Sender};
 
 use crate::core::{
     bucket::{self, Bucket},
@@ -29,11 +29,12 @@ pub enum Error {
 
 pub struct Store {
     buckets: DashMap<bucket::Id, Bucket>,
+    refills: Mutex<HashMap<bucket::Id, Arc<Notify>>>,
     config: Config,
     redis: cache::Redis,
 }
 
-const CHUNK_SIZE: usize = 200;
+const CHUNK_SIZE: usize = 2000;
 
 impl Store {
     pub fn new(
@@ -45,6 +46,7 @@ impl Store {
 
         let s = Arc::new(Self {
             buckets,
+            refills: Mutex::default(),
             config,
             redis: redis.clone(),
         });
@@ -143,11 +145,73 @@ impl Store {
 
         s
     }
+}
 
-    pub async fn lease(&self, b_id: bucket::Id) -> Result<()> {
+impl Store {
+    pub async fn consume(&self, b_id: bucket::Id) -> Result<u64> {
+        self.ensure_refilled(&b_id).await?;
+
+        if let Some(b) = self.buckets.get(&b_id) {
+            if b.is_expired() {
+                debug!("Bucket {b_id} expired, cleaning up");
+                drop(b);
+                self.buckets.remove(&b_id);
+                return Ok(0);
+            }
+
+            debug!("Consuming token from {b_id}");
+            let tokens_left = b.consume();
+
+            debug!("Tokens for {b_id} left: {tokens_left}");
+            return Ok(tokens_left);
+        }
+
+        Ok(0)
+    }
+}
+
+impl Store {
+    async fn ensure_refilled(&self, b_id: &bucket::Id) -> Result<()> {
+        loop {
+            if self.check(b_id)? {
+                return Ok(());
+            }
+
+            let notify = {
+                let mut rg = self.refills.lock().await;
+
+                if let Some(notify) = rg.get(b_id) {
+                    notify.clone()
+                } else {
+                    let notify = Arc::new(Notify::new());
+                    rg.insert(b_id.clone(), notify.clone());
+                    drop(rg);
+
+                    let result = self.lease(b_id.clone()).await;
+
+                    let mut rg = self.refills.lock().await;
+                    if rg.remove(b_id).is_some() {
+                        notify.notify_waiters();
+                    }
+                    drop(rg);
+
+                    return result;
+                }
+            };
+
+            notify.notified().await;
+        }
+    }
+
+    async fn lease(&self, b_id: bucket::Id) -> Result<()> {
         let tokens: cache::Result<u64> = self.redis.execute(Get::new(b_id.clone())).await;
 
-        let lease_size = self.config.lease_size;
+        let criteria = match b_id {
+            bucket::Id::Public(_) => &self.config.public,
+            bucket::Id::Protected(_) => &self.config.protected,
+        };
+
+        let lease_size = criteria.lease_size();
         let (leased, ttl) = match tokens {
             Ok(0) => {
                 // At this point redis bucket is also exhausted
@@ -165,11 +229,6 @@ impl Store {
             }
 
             Err(cache::Error::NotFound(_)) => {
-                let criteria = match b_id {
-                    bucket::Id::Public(_) => &self.config.public,
-                    bucket::Id::Protected(_) => &self.config.protected,
-                };
-
                 // ideally should never happen, but if will - panic
                 assert!(criteria.quota() >= lease_size);
 
@@ -193,25 +252,7 @@ impl Store {
         self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 
-    pub fn consume(&self, b_id: &bucket::Id) -> u64 {
-        if let Some(b) = self.buckets.get(b_id) {
-            if b.is_expired() {
-                debug!("Bucket {b_id} expired, cleaning up");
-                drop(b);
-                self.buckets.remove(b_id);
-                return 0;
-            }
-
-            debug!("Consuming token from {b_id}");
-            let tokens_left = b.consume();
-
-            debug!("Tokens for {b_id} left: {tokens_left}");
-            return tokens_left;
-        }
-        0
-    }
-
-    pub fn check(&self, b_id: &bucket::Id) -> Result<bool> {
+    fn check(&self, b_id: &bucket::Id) -> Result<bool> {
         match self.buckets.get(b_id) {
             Some(b) => {
                 if b.is_exhausted() {

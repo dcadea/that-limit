@@ -27,11 +27,7 @@ impl RateLimitService for Service {
         let req = request.into_inner();
         let b_id = extract_identifier(&req)?;
 
-        if !self.store.check(&b_id)? {
-            self.store.lease(b_id.clone()).await?;
-        }
-
-        let tokens_left = self.store.consume(&b_id);
+        let tokens_left = self.store.consume(b_id).await?;
 
         let response = RateLimitResponse {
             overall_code: if tokens_left > 0 {

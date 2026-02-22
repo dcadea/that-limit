@@ -15,37 +15,36 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+#[serde(rename_all = "snake_case")]
+enum Criteria {
+    Sub,
+    Ip,
+}
+
 #[serde_as]
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct Quota {
+pub struct Policy {
+    criteria: Criteria,
     quota: u64,
+    lease_size: u64,
     #[serde_as(as = "DurationSeconds<u64>")]
     reset_in: Duration,
 }
 
-#[serde_as]
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-#[serde(tag = "criteria", rename_all = "snake_case")]
-pub enum Criteria {
-    Sub(Quota),
-    Ip(Quota),
-}
-
-impl Criteria {
+impl Policy {
     pub const fn quota(&self) -> u64 {
-        match self {
-            Self::Ip(q) | Self::Sub(q) => q,
-        }
-        .quota
+        self.quota
+    }
+
+    pub const fn lease_size(&self) -> u64 {
+        self.lease_size
     }
 
     pub const fn reset_in(&self) -> Duration {
-        match self {
-            Self::Ip(q) | Self::Sub(q) => q,
-        }
-        .reset_in
+        self.reset_in
     }
 }
 
@@ -61,10 +60,9 @@ pub struct Cleanup {
 #[derive(Clone, Deserialize, Debug, Serialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
-    pub lease_size: u64,
     pub cleanup: Cleanup,
-    pub protected: Criteria,
-    pub public: Criteria,
+    pub protected: Policy,
+    pub public: Policy,
 }
 
 pub fn get(path: &str) -> Result<Config> {
@@ -76,19 +74,22 @@ pub fn get(path: &str) -> Result<Config> {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            lease_size: 100,
             cleanup: Cleanup {
                 enabled: false,
                 interval: Duration::default(),
             },
-            protected: Criteria::Sub(Quota {
+            protected: Policy {
+                criteria: Criteria::Sub,
                 quota: 10000,
+                lease_size: 2000,
                 reset_in: Duration::from_secs(600),
-            }),
-            public: Criteria::Ip(Quota {
+            },
+            public: Policy {
+                criteria: Criteria::Ip,
                 quota: 500,
+                lease_size: 100,
                 reset_in: Duration::from_hours(1),
-            }),
+            },
         }
     }
 }
@@ -100,27 +101,30 @@ use crate::core::bucket;
 impl Config {
     pub fn with_protected_quota(&self, quota: u64) -> Self {
         Self {
-            protected: Criteria::Sub(Quota {
+            protected: Policy {
                 quota,
-                reset_in: self.protected.reset_in(),
-            }),
+                ..self.protected.clone()
+            },
             ..self.clone()
         }
     }
 
     pub fn with_protected_reset_in(&self, reset_in: Duration) -> Self {
         Self {
-            protected: Criteria::Sub(Quota {
-                quota: self.protected.quota(),
+            protected: Policy {
                 reset_in,
-            }),
+                ..self.protected.clone()
+            },
             ..self.clone()
         }
     }
 
-    pub fn with_lease_size(&self, lease_size: u64) -> Self {
+    pub fn with_protected_lease_size(&self, lease_size: u64) -> Self {
         Self {
-            lease_size,
+            protected: Policy {
+                lease_size,
+                ..self.protected.clone()
+            },
             ..self.clone()
         }
     }
@@ -160,19 +164,22 @@ mod test {
         assert_eq!(
             c.unwrap(),
             Config {
-                lease_size: 100,
                 cleanup: Cleanup {
                     enabled: true,
                     interval: Duration::from_secs(5),
                 },
-                protected: Criteria::Sub(Quota {
+                protected: Policy {
+                    criteria: Criteria::Sub,
                     quota: 10000,
+                    lease_size: 2000,
                     reset_in: Duration::from_secs(600)
-                }),
-                public: Criteria::Ip(Quota {
+                },
+                public: Policy {
+                    criteria: Criteria::Ip,
                     quota: 500,
+                    lease_size: 100,
                     reset_in: Duration::from_hours(1)
-                })
+                }
             }
         );
     }

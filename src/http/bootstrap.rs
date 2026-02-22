@@ -3,7 +3,7 @@ use std::{env, net::SocketAddr};
 use axum::{
     Router,
     http::StatusCode,
-    middleware::{from_fn, from_fn_with_state},
+    middleware::from_fn,
     routing::{get, post},
 };
 use log::info;
@@ -12,17 +12,14 @@ use tower::ServiceBuilder;
 use crate::{
     bootstrap::{App, shutdown_signal},
     http::{
-        middleware::{extract_identifier, extract_ip, lease_tokens},
+        middleware::{extract_identifier, extract_ip},
         state, store,
     },
 };
 
 pub fn init_router(s: state::AppState) -> Router {
     let protected = Router::new()
-        .route(
-            "/consume",
-            post(store::consume).layer(from_fn_with_state(s.clone(), lease_tokens)),
-        )
+        .route("/consume", post(store::consume))
         .route_layer(
             ServiceBuilder::new()
                 .layer(from_fn(extract_ip))

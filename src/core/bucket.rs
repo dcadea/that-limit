@@ -3,7 +3,7 @@ use std::{
     net::IpAddr,
     ops::Add,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -27,13 +27,13 @@ impl Display for Id {
 #[derive(Debug)]
 pub(super) struct Bucket {
     tokens: AtomicU64,
-    expires_at: SystemTime,
+    expires_at: Instant,
     exhausted: AtomicBool,
 }
 
 impl Bucket {
     pub fn new(tokens: u64, ttl: Duration) -> Self {
-        let expires_at = SystemTime::now().add(ttl);
+        let expires_at = Instant::now().add(ttl);
 
         Self {
             tokens: AtomicU64::new(tokens),
@@ -51,7 +51,7 @@ impl Bucket {
     }
 
     pub fn is_expired(&self) -> bool {
-        self.expires_at <= SystemTime::now()
+        self.expires_at <= Instant::now()
     }
 
     pub fn set_exhausted(&self) {
@@ -63,19 +63,8 @@ impl Bucket {
     }
 
     pub fn consume(&self) -> u64 {
-        let mut current = self.tokens.load(Ordering::Relaxed);
-
-        while current > 0 {
-            if self
-                .tokens
-                .compare_exchange(current, current - 1, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                return current - 1;
-            }
-            current = self.tokens.load(Ordering::Relaxed);
-        }
-
-        0
+        self.tokens
+            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |v| v.checked_sub(1))
+            .map_or(0, |old| old - 1)
     }
 }

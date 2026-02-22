@@ -8,20 +8,16 @@ use crate::core::{bucket, store::Store};
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(test, derive(PartialEq, Eq, Debug))]
 pub struct ConsumeResponse {
-    bucket_id: bucket::Id,
     tokens_left: u64,
 }
 
 pub async fn consume(
     Extension(bucket_id): Extension<bucket::Id>,
     store: State<Arc<Store>>,
-) -> Json<ConsumeResponse> {
-    let tokens_left = store.consume(&bucket_id);
+) -> super::Result<Json<ConsumeResponse>> {
+    let tokens_left = store.consume(bucket_id).await?;
 
-    Json(ConsumeResponse {
-        bucket_id,
-        tokens_left,
-    })
+    Ok(Json(ConsumeResponse { tokens_left }))
 }
 
 #[cfg(test)]
@@ -39,7 +35,6 @@ mod test {
     use tower::ServiceExt;
 
     use crate::{
-        core::bucket,
         core::cfg::Config,
         http::bootstrap::{init_router, test::TestApp},
         http::middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
@@ -67,8 +62,7 @@ mod test {
 
         let config = app.config();
         let expexted = ConsumeResponse {
-            bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
-            tokens_left: config.lease_size - 1,
+            tokens_left: config.protected.lease_size() - 1,
         };
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -109,8 +103,7 @@ mod test {
 
             let config = app.config();
             let expexted = ConsumeResponse {
-                bucket_id: bucket::Id::Public(ip.parse().unwrap()),
-                tokens_left: config.lease_size - 1,
+                tokens_left: config.public.lease_size() - 1,
             };
 
             let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -174,8 +167,7 @@ mod test {
 
         let config = app.config();
         let expexted = ConsumeResponse {
-            bucket_id: bucket::Id::Protected(TEST_USER.to_string()),
-            tokens_left: config.lease_size - 2,
+            tokens_left: config.protected.lease_size() - 2,
         };
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -205,7 +197,9 @@ mod test {
 
     #[tokio::test]
     async fn should_return_exhausted_when_no_quota_left() {
-        let config = Config::default().with_protected_quota(1).with_lease_size(1);
+        let config = Config::default()
+            .with_protected_quota(1)
+            .with_protected_lease_size(1);
         let app = TestApp::with_cfg(config).await;
         let r = init_router(app.app_state().clone());
 
@@ -218,7 +212,9 @@ mod test {
 
     #[tokio::test]
     async fn should_lease_more_tokens_when_bucket_is_exhausted_and_quota_not_exceeded() {
-        let config = Config::default().with_protected_quota(5).with_lease_size(2);
+        let config = Config::default()
+            .with_protected_quota(5)
+            .with_protected_lease_size(2);
         let app = TestApp::with_cfg(config).await;
         let r = init_router(app.app_state().clone());
 
@@ -256,7 +252,7 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(app.config().lease_size - 1, actual.tokens_left);
+        assert_eq!(app.config().protected.lease_size() - 1, actual.tokens_left);
 
         // wait for bucket to expire
         time::sleep(reset_in).await;

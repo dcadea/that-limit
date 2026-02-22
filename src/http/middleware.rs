@@ -1,15 +1,14 @@
-use std::{net::IpAddr, sync::Arc};
+use std::net::IpAddr;
 
 use axum::{
-    Extension,
     body::Body,
-    extract::{Request, State},
+    extract::Request,
     http::{HeaderMap, HeaderName},
     middleware::Next,
     response::Response,
 };
 
-use crate::core::{bucket, store::Store};
+use crate::core::bucket;
 
 #[derive(Clone)]
 struct ClientIp(IpAddr);
@@ -66,19 +65,4 @@ pub async fn extract_identifier(
         }
         None => Err(super::Error::Unauthorized),
     }
-}
-
-pub async fn lease_tokens(
-    Extension(b_id): Extension<bucket::Id>,
-    store: State<Arc<Store>>,
-    request: Request<Body>,
-    next: Next,
-) -> super::Result<Response> {
-    if store.check(&b_id)? {
-        return Ok(next.run(request).await);
-    }
-
-    store.lease(b_id).await?;
-
-    Ok(next.run(request).await)
 }
