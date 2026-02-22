@@ -28,7 +28,7 @@ impl From<core::store::Error> for tonic::Status {
         error!("Mapping error to gRPC response: {e:?}");
 
         match e {
-            core::store::Error::Exhausted(id) => {
+            core::store::Error::Exhausted(id, _) => {
                 Self::resource_exhausted(format!("Identity: {id} consumed all tokens"))
             }
             core::store::Error::Cache(_) => Self::internal("Internal Server Error"),

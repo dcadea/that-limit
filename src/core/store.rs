@@ -1,4 +1,9 @@
-use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use dashmap::DashMap;
 use log::{debug, error};
@@ -21,8 +26,8 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Bucket {0} is exhausted")]
-    Exhausted(bucket::Id),
+    #[error("Bucket {0} is exhausted, retry after: {1:?}")]
+    Exhausted(bucket::Id, Option<Instant>),
     #[error(transparent)]
     Cache(#[from] cache::Error),
 }
@@ -216,8 +221,8 @@ impl Store {
             Ok(0) => {
                 // At this point redis bucket is also exhausted
                 // Explicitly mark local bucket as exhausted to avoid unnecessary round trip
-                self.mark_as_exhausted(&b_id);
-                return Err(Error::Exhausted(b_id));
+                let expires_at = self.mark_as_exhausted(&b_id);
+                return Err(Error::Exhausted(b_id, expires_at));
             }
             Ok(tokens) => {
                 let leased = min(tokens, lease_size);
@@ -257,7 +262,7 @@ impl Store {
             Some(b) => {
                 if b.is_exhausted() {
                     debug!("Bucket {b_id} is exhausted");
-                    return Err(Error::Exhausted(b_id.clone()));
+                    return Err(Error::Exhausted(b_id.clone(), Some(b.expires_at())));
                 }
 
                 if b.is_empty() {
@@ -271,10 +276,13 @@ impl Store {
         }
     }
 
-    fn mark_as_exhausted(&self, b_id: &bucket::Id) {
+    fn mark_as_exhausted(&self, b_id: &bucket::Id) -> Option<Instant> {
         if let Some(b) = self.buckets.get(b_id) {
             b.set_exhausted();
+            return Some(b.expires_at());
         }
+
+        None
     }
 }
 

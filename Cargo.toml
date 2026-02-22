@@ -35,4 +35,3 @@ envoy-types = { version = "0.7.2", optional = true }
 
 [dev-dependencies]
 testcontainers-modules = { version = "0.14.0", features = ["redis"] }
-http-body-util = "0.1.3"

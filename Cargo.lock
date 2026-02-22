@@ -1923,7 +1923,6 @@ dependencies = [
  "dotenv",
  "envoy-types",
  "futures",
- "http-body-util",
  "log",
  "prost",
  "redis",

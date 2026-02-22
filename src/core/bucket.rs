@@ -54,6 +54,10 @@ impl Bucket {
         self.expires_at <= Instant::now()
     }
 
+    pub const fn expires_at(&self) -> Instant {
+        self.expires_at
+    }
+
     pub fn set_exhausted(&self) {
         self.exhausted.store(true, Ordering::Release);
     }

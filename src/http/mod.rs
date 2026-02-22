@@ -1,6 +1,10 @@
-use axum::{Json, http::StatusCode, response::IntoResponse};
+use std::time::Instant;
+
+use axum::{
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::IntoResponse,
+};
 use log::error;
-use serde::Serialize;
 
 use crate::core;
 
@@ -21,33 +25,27 @@ pub enum Error {
     Unauthorized,
 }
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    error_message: String,
-}
-
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
-        error!("Mapping error to HTTP response: {self:?}");
+        error!("Mapping to HTTP response: {self:?}");
 
-        let (status, error_message) = match self {
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+        let mut headers = HeaderMap::new();
+
+        let status = match self {
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Store(e) => match e {
-                core::store::Error::Exhausted(id) => (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    format!("Identity: {id} consumed all tokens"),
-                ),
-                core::store::Error::Cache(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal Server Error".to_string(),
-                ),
+                core::store::Error::Exhausted(_, expires_at) => {
+                    if let Some(duration) = expires_at.map(|ex| ex.duration_since(Instant::now())) {
+                        headers.insert(header::RETRY_AFTER, HeaderValue::from(duration.as_secs()));
+                    }
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                core::store::Error::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
-            Self::Cfg(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error".to_string(),
-            ),
-        };
+            Self::Cfg(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+        .into_response();
 
-        (status, Json(ErrorResponse { error_message })).into_response()
+        (headers, status).into_response()
     }
 }

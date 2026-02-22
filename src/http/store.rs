@@ -1,39 +1,33 @@
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::State};
-use serde::{Deserialize, Serialize};
+use axum::{Extension, extract::State, http::HeaderName, response::IntoResponse};
 
 use crate::core::{bucket, store::Store};
 
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
-pub struct ConsumeResponse {
-    tokens_left: u64,
-}
+// TODO: see https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
+const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
 
 pub async fn consume(
     Extension(bucket_id): Extension<bucket::Id>,
     store: State<Arc<Store>>,
-) -> super::Result<Json<ConsumeResponse>> {
+) -> super::Result<impl IntoResponse> {
     let tokens_left = store.consume(bucket_id).await?;
 
-    Ok(Json(ConsumeResponse { tokens_left }))
+    Ok(([(RATE_LIMIT_HEADER_NAME, format!("r={tokens_left}"))], ()))
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     use std::time::Duration;
 
     use axum::{
         body::Body,
-        http::{self, Request, StatusCode},
+        http::{self, HeaderValue, Request, StatusCode},
     };
-    use http_body_util::BodyExt;
     use tokio::time;
     use tower::ServiceExt;
 
+    use super::*;
     use crate::{
         core::cfg::Config,
         http::bootstrap::{init_router, test::TestApp},
@@ -61,14 +55,16 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let config = app.config();
-        let expexted = ConsumeResponse {
-            tokens_left: config.protected.lease_size() - 1,
-        };
+        let expected = format!("r={}", config.protected.lease_size() - 1);
 
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
 
-        assert_eq!(expexted, actual);
+        assert_eq!(expected, actual);
     }
 
     #[tokio::test]
@@ -102,14 +98,16 @@ mod test {
             assert_eq!(StatusCode::OK, response.status());
 
             let config = app.config();
-            let expexted = ConsumeResponse {
-                tokens_left: config.public.lease_size() - 1,
-            };
+            let expected = format!("r={}", config.public.lease_size() - 1);
 
-            let body = response.into_body().collect().await.unwrap().to_bytes();
-            let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+            let actual = response
+                .headers()
+                .get(RATE_LIMIT_HEADER_NAME)
+                .map(HeaderValue::to_str)
+                .map(Result::unwrap)
+                .unwrap();
 
-            assert_eq!(expexted, actual);
+            assert_eq!(expected, actual);
         }
     }
 
@@ -166,14 +164,16 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let config = app.config();
-        let expexted = ConsumeResponse {
-            tokens_left: config.protected.lease_size() - 2,
-        };
+        let expected = format!("r={}", config.protected.lease_size() - 2);
 
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
 
-        assert_eq!(expexted, actual);
+        assert_eq!(expected, actual);
     }
 
     #[tokio::test]
@@ -221,23 +221,35 @@ mod test {
         // first request leases first batch of tokens
         let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(1, actual.tokens_left);
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+        assert_eq!("r=1", actual);
 
         // this will consume last token
         let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(0, actual.tokens_left);
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+        assert_eq!("r=0", actual);
 
         // one more request to lease new batch of tokens
         let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(1, actual.tokens_left);
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+        assert_eq!("r=1", actual);
     }
 
     #[tokio::test]
@@ -247,20 +259,30 @@ mod test {
         let app = TestApp::with_cfg(config).await;
         let r = init_router(app.app_state().clone());
 
+        let expected = format!("r={}", app.config().protected.lease_size() - 1);
+
         // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
         let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(app.config().protected.lease_size() - 1, actual.tokens_left);
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+        assert_eq!(expected, actual);
 
         // wait for bucket to expire
         time::sleep(reset_in).await;
 
         let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let actual: ConsumeResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(0, actual.tokens_left);
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+        assert_eq!("r=0", actual);
     }
 }
