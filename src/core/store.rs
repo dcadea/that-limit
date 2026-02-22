@@ -1,13 +1,12 @@
 use std::{
     cmp::min,
-    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use dashmap::DashMap;
 use log::{debug, error};
-use tokio::sync::{Mutex, Notify, broadcast::Sender};
+use tokio::sync::{Notify, broadcast::Sender};
 
 use crate::core::{
     bucket::{self, Bucket},
@@ -33,8 +32,8 @@ pub enum Error {
 }
 
 pub struct Store {
-    buckets: DashMap<bucket::Id, Bucket>,
-    refills: Mutex<HashMap<bucket::Id, Arc<Notify>>>,
+    buckets: DashMap<bucket::Id, Bucket, ahash::RandomState>,
+    refills: DashMap<bucket::Id, Arc<Notify>, ahash::RandomState>,
     config: Config,
     redis: cache::Redis,
 }
@@ -47,11 +46,21 @@ impl Store {
         redis: cache::Redis,
         shutdown_tx: Option<Sender<Command>>,
     ) -> Arc<Self> {
-        let buckets = DashMap::with_capacity(10000);
+        let buckets = DashMap::with_capacity_and_hasher_and_shard_amount(
+            100_000,
+            ahash::RandomState::new(),
+            1024,
+        );
+
+        let refills = DashMap::with_capacity_and_hasher_and_shard_amount(
+            1000,
+            ahash::RandomState::new(),
+            128,
+        );
 
         let s = Arc::new(Self {
             buckets,
-            refills: Mutex::default(),
+            refills,
             config,
             redis: redis.clone(),
         });
@@ -182,25 +191,18 @@ impl Store {
                 return Ok(());
             }
 
-            let notify = {
-                let mut rg = self.refills.lock().await;
+            let notify = match self.refills.entry(b_id.clone()) {
+                dashmap::Entry::Occupied(entry) => entry.get().clone(),
+                dashmap::Entry::Vacant(entry) => {
+                    let n = Arc::new(Notify::new());
+                    entry.insert(n.clone());
 
-                if let Some(notify) = rg.get(b_id) {
-                    notify.clone()
-                } else {
-                    let notify = Arc::new(Notify::new());
-                    rg.insert(b_id.clone(), notify.clone());
-                    drop(rg);
+                    let res = self.lease(b_id.clone()).await;
 
-                    let result = self.lease(b_id.clone()).await;
-
-                    let mut rg = self.refills.lock().await;
-                    if rg.remove(b_id).is_some() {
-                        notify.notify_waiters();
+                    if let Some((_, n_to_notify)) = self.refills.remove(b_id) {
+                        n_to_notify.notify_waiters();
                     }
-                    drop(rg);
-
-                    return result;
+                    return res;
                 }
             };
 
