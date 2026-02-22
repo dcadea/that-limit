@@ -114,9 +114,9 @@ pub mod cache {
     }
 
     pub mod action {
-        use std::{fmt::Debug, marker::PhantomData, time::Duration};
+        use std::{fmt::Debug, time::Duration};
 
-        use log::{error, trace, warn};
+        use log::trace;
         use redis::AsyncCommands;
 
         pub trait Action {
@@ -129,138 +129,14 @@ pub mod cache {
             ) -> super::Result<Self::Output>;
         }
 
-        pub struct SetEx<K, V> {
-            key: K,
-            value: V,
-            ttl: Duration,
-        }
-
-        pub struct Get<K, R> {
-            key: K,
-            _r: PhantomData<R>,
-        }
-
-        pub struct Ttl<K> {
-            key: K,
-        }
-
         pub struct Incr<K> {
             key: K,
             delta: u64,
         }
 
-        pub struct Decr<K> {
-            key: K,
-            delta: u64,
-        }
-
-        impl<K, V> SetEx<K, V> {
-            pub const fn new(key: K, value: V, ttl: Duration) -> Self {
-                Self { key, value, ttl }
-            }
-        }
-
-        impl<K, R> Get<K, R> {
-            pub const fn new(key: K) -> Self {
-                Self {
-                    key,
-                    _r: PhantomData,
-                }
-            }
-        }
-
-        impl<K> Ttl<K> {
-            pub const fn new(key: K) -> Self {
-                Self { key }
-            }
-        }
-
         impl<K> Incr<K> {
             pub const fn new(key: K, delta: u64) -> Self {
                 Self { key, delta }
-            }
-        }
-
-        impl<K> Decr<K> {
-            pub const fn new(key: K, delta: u64) -> Self {
-                Self { key, delta }
-            }
-        }
-
-        impl<K, V> Action for SetEx<K, V>
-        where
-            K: redis::ToSingleRedisArg + Sync + Debug,
-            V: redis::ToSingleRedisArg + Send + Sync,
-        {
-            type Output = ();
-
-            async fn execute(
-                self,
-                con: &mut redis::aio::ConnectionManager,
-            ) -> super::Result<Self::Output> {
-                let key = self.key;
-                trace!("SET_EX -> {key:?}");
-                con.set_ex::<_, _, ()>(&key, self.value, self.ttl.as_secs())
-                    .await?;
-                Ok(())
-            }
-        }
-
-        impl<K, R> Action for Get<K, R>
-        where
-            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
-            R: redis::FromRedisValue,
-        {
-            type Output = R;
-
-            async fn execute(
-                self,
-                con: &mut redis::aio::ConnectionManager,
-            ) -> super::Result<Self::Output> {
-                let key = self.key;
-                match con.get::<_, Option<Self::Output>>(&key).await {
-                    Ok(value) => {
-                        let status = if value.is_some() { "Hit" } else { "Miss" };
-                        trace!("GET ({status}) -> {key:?}");
-
-                        value.ok_or(super::Error::NotFound(key.to_string()))
-                    }
-                    Err(e) => {
-                        error!("Failed to GET on {key:?}. Reason: {e:?}");
-                        Err(super::Error::from(e))
-                    }
-                }
-            }
-        }
-
-        impl<K> Action for Ttl<K>
-        where
-            K: redis::ToSingleRedisArg + Sync + Debug + ToString,
-        {
-            type Output = Duration;
-
-            async fn execute(
-                self,
-                con: &mut redis::aio::ConnectionManager,
-            ) -> super::Result<Self::Output> {
-                let key = self.key;
-                trace!("TTL -> {key:?}");
-                match con.ttl::<_, i64>(&key).await {
-                    Ok(ttl) if ttl > 0 => Ok(Duration::from_secs(ttl.cast_unsigned())),
-                    Ok(v) => {
-                        if v == -1 {
-                            warn!("Key {key:?} has no expiration");
-                            Err(super::Error::NoExpiration(key.to_string()))
-                        } else if v == -2 {
-                            warn!("Key {key:?} does not exist");
-                            Err(super::Error::KeyDoesNotExist(key.to_string()))
-                        } else {
-                            error!("Invalid TTL: {v} for key {key:?}");
-                            Err(super::Error::Unexpected("Invalid TTL value".to_string()))
-                        }
-                    }
-                    Err(e) => Err(super::Error::from(e)),
-                }
             }
         }
 
@@ -281,38 +157,129 @@ pub mod cache {
             }
         }
 
-        /// To avoid race conditions when multiple instances
-        /// try to decrement same key, lua script is used which
-        /// performs atomic operation and solves CAS (Check-And-Set) problem
-        const DECR_SCRIPT: &str = r#"
-            local current = tonumber(redis.call('GET', KEYS[1]) or "0")
-            local decr_by = tonumber(ARGV[1])
+        pub struct Lease<K> {
+            key: K,
+            size: u64,
+            quota: u64,
+            ttl: Duration,
+        }
 
-            if current >= decr_by then
-                return redis.call('DECRBY', KEYS[1], decr_by)
+        impl<K> Lease<K> {
+            pub const fn new(key: K, size: u64, quota: u64, ttl: Duration) -> Self {
+                Self {
+                    key,
+                    size,
+                    quota,
+                    ttl,
+                }
+            }
+        }
+
+        const LEASE_SCRIPT: &str = r"
+            local key = KEYS[1]
+            local lease_size = tonumber(ARGV[1])
+            local quota = tonumber(ARGV[2])
+            local default_ttl = tonumber(ARGV[3])
+
+            local current = redis.call('GET', key)
+
+            if not current then
+                local remaining = quota - lease_size
+                redis.call('SETEX', key, default_ttl, remaining)
+                return {lease_size, default_ttl}
             end
-        "#;
 
-        impl<K> Action for Decr<K>
+            local tokens = tonumber(current)
+            if tokens <= 0 then
+                return {0, redis.call('TTL', key)}
+            end
+
+            local to_lease = math.min(tokens, lease_size)
+            redis.call('DECRBY', key, to_lease)
+            local ttl = redis.call('TTL', key)
+
+            return {to_lease, ttl}
+        ";
+
+        impl<K> Action for Lease<K>
         where
             K: redis::ToSingleRedisArg + Sync + Debug + ToString,
         {
-            type Output = ();
+            type Output = (u64, Duration);
 
             async fn execute(
                 self,
                 con: &mut redis::aio::ConnectionManager,
             ) -> super::Result<Self::Output> {
                 let key = self.key;
-                trace!("DECR -> {key:?}");
+                trace!("LEASE -> {key:?}");
 
-                redis::Script::new(DECR_SCRIPT)
-                    .key(key)
-                    .arg(self.delta)
-                    .invoke_async::<u64>(con)
+                let (leased, ttl_secs): (u64, u64) = redis::Script::new(LEASE_SCRIPT)
+                    .key(&key)
+                    .arg(self.size)
+                    .arg(self.quota)
+                    .arg(self.ttl.as_secs())
+                    .invoke_async(con)
                     .await?;
 
-                Ok(())
+                let ttl = if ttl_secs > 0 {
+                    Duration::from_secs(ttl_secs)
+                } else {
+                    self.ttl
+                };
+
+                Ok((leased, ttl))
+            }
+        }
+
+        #[cfg(test)]
+        pub mod test {
+            use log::error;
+            use std::marker::PhantomData;
+
+            use crate::core::integration::cache;
+
+            use super::*;
+
+            pub struct Get<K, R> {
+                key: K,
+                _r: PhantomData<R>,
+            }
+
+            impl<K, R> Get<K, R> {
+                pub const fn new(key: K) -> Self {
+                    Self {
+                        key,
+                        _r: PhantomData,
+                    }
+                }
+            }
+
+            impl<K, R> Action for Get<K, R>
+            where
+                K: redis::ToSingleRedisArg + Sync + Debug + ToString,
+                R: redis::FromRedisValue,
+            {
+                type Output = R;
+
+                async fn execute(
+                    self,
+                    con: &mut redis::aio::ConnectionManager,
+                ) -> cache::Result<Self::Output> {
+                    let key = self.key;
+                    match con.get::<_, Option<Self::Output>>(&key).await {
+                        Ok(value) => {
+                            let status = if value.is_some() { "Hit" } else { "Miss" };
+                            trace!("GET ({status}) -> {key:?}");
+
+                            value.ok_or(cache::Error::NotFound(key.to_string()))
+                        }
+                        Err(e) => {
+                            error!("Failed to GET on {key:?}. Reason: {e:?}");
+                            Err(cache::Error::from(e))
+                        }
+                    }
+                }
             }
         }
     }

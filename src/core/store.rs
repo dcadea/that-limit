@@ -1,5 +1,4 @@
 use std::{
-    cmp::min,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -15,7 +14,7 @@ use crate::core::{
         Command,
         cache::{
             self,
-            action::{Decr, Get, Incr, SetEx, Ttl},
+            action::{Incr, Lease},
         },
     },
 };
@@ -211,45 +210,25 @@ impl Store {
     }
 
     async fn lease(&self, b_id: bucket::Id) -> Result<()> {
-        let tokens: cache::Result<u64> = self.redis.execute(Get::new(b_id.clone())).await;
-
         let criteria = match b_id {
             bucket::Id::Public(_) => &self.config.public,
             bucket::Id::Protected(_) => &self.config.protected,
         };
 
-        let lease_size = criteria.lease_size();
-        let (leased, ttl) = match tokens {
-            Ok(0) => {
-                // At this point redis bucket is also exhausted
-                // Explicitly mark local bucket as exhausted to avoid unnecessary round trip
-                let expires_at = self.mark_as_exhausted(&b_id);
-                return Err(Error::Exhausted(b_id, expires_at));
-            }
-            Ok(tokens) => {
-                let leased = min(tokens, lease_size);
+        let lease_action = Lease::new(
+            b_id.clone(),
+            criteria.lease_size(),
+            criteria.quota(),
+            criteria.reset_in(),
+        );
 
-                self.redis.execute(Decr::new(b_id.clone(), leased)).await?;
+        let (leased, ttl) = self.redis.execute(lease_action).await?;
 
-                let ttl = self.redis.execute(Ttl::new(b_id.clone())).await?;
-                (leased, ttl)
-            }
+        if leased == 0 {
+            let expires_at = self.mark_as_exhausted(&b_id);
+            return Err(Error::Exhausted(b_id, expires_at));
+        }
 
-            Err(cache::Error::NotFound(_)) => {
-                // ideally should never happen, but if will - panic
-                assert!(criteria.quota() >= lease_size);
-
-                let ttl = criteria.reset_in();
-
-                self.redis
-                    .execute(SetEx::new(b_id.clone(), criteria.quota() - lease_size, ttl))
-                    .await?;
-
-                (lease_size, ttl)
-            }
-
-            Err(e) => return Err(Error::from(e)),
-        };
         debug!("Leased {leased} tokens for {b_id:?}");
         self.add(b_id, leased, ttl);
         Ok(())
@@ -297,10 +276,13 @@ mod test {
 
     use super::*;
 
-    use crate::{
-        core::bucket,
-        core::cfg::{Cleanup, Config},
-        core::integration::{Command, cache},
+    use crate::core::{
+        bucket,
+        cfg::{Cleanup, Config},
+        integration::{
+            Command,
+            cache::{self, action::test::Get},
+        },
     };
 
     #[tokio::test]
