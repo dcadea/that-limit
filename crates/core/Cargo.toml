@@ -19,5 +19,5 @@ serde_json = "1.0.149"
 serde_with = { version = "3.16.1", features = ["time_0_3"] }
 
 [dev-dependencies]
-testcontainers-modules = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["redis"] }
 that-limit-test-utils = { path = "../test-utils" }

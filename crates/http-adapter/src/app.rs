@@ -31,6 +31,9 @@ pub fn init_router(s: AppState) -> Router {
         .with_state(s)
 }
 
+/// # Panics
+///
+/// Will panic if could not bind to specified port or port is malformed.
 pub async fn start_http<F>(store: Arc<Store>, signal: F)
 where
     F: Future<Output = ()> + Send + 'static,

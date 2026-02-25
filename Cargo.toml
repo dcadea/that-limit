@@ -17,11 +17,4 @@ simplelog = "0.12.2"
 
 tokio = { version = "1.49.0", default-features = false }
 redis = { version = "1.0.3", default-features = false }
-testcontainers-modules = { version = "0.14.0", features = ["redis"] }
-
-
-
-
-# [dependencies]
-# dotenv = "0.15.0"
-# simplelog = "0.12.2"
+testcontainers-modules = { version = "0.14.0", default-features = false }

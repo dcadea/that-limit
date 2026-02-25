@@ -6,6 +6,9 @@ use tonic::transport::Server;
 
 use crate::store;
 
+/// # Panics
+///
+/// Will panic if could not bind to specified port or port is malformed.
 pub async fn start_envoy<F>(store: Arc<Store>, signal: F)
 where
     F: Future<Output = ()>,

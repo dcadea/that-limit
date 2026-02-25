@@ -5,9 +5,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_with::{DurationSeconds, serde_as};
 
-#[cfg(test)]
-use crate::bucket;
-
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
@@ -88,6 +85,9 @@ impl Default for Config {
 }
 
 #[cfg(test)]
+use crate::bucket;
+
+#[cfg(test)]
 impl Config {
     pub fn with_cleanup(&self, cleanup: Cleanup) -> Self {
         Self {
@@ -122,7 +122,7 @@ impl Config {
 }
 
 #[cfg(test)]
-pub mod test {
+mod test {
     use std::time::Duration;
 
     use super::*;
