@@ -5,22 +5,23 @@ use axum::{
     response::IntoResponse,
 };
 use log::error;
+use that_limit_core::{ConfigError, StoreError};
 
-use crate::core;
-
-mod bootstrap;
+mod app;
 mod middleware;
 mod state;
 mod store;
+
+pub use app::start_http;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Cfg(#[from] core::cfg::Error),
+    Cfg(#[from] ConfigError),
     #[error(transparent)]
-    Store(#[from] core::store::Error),
+    Store(#[from] StoreError),
     #[error("Unauthorized")]
     Unauthorized,
 }
@@ -34,13 +35,13 @@ impl IntoResponse for Error {
         let status = match self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Store(e) => match e {
-                core::store::Error::Exhausted(_, expires_at) => {
+                StoreError::Exhausted(_, expires_at) => {
                     if let Some(duration) = expires_at.map(|ex| ex.duration_since(Instant::now())) {
                         headers.insert(header::RETRY_AFTER, HeaderValue::from(duration.as_secs()));
                     }
                     StatusCode::TOO_MANY_REQUESTS
                 }
-                core::store::Error::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                StoreError::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
             Self::Cfg(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

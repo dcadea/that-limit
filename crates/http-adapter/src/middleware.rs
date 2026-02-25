@@ -7,8 +7,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-
-use crate::core::bucket;
+use that_limit_core::BucketId;
 
 #[derive(Clone)]
 struct ClientIp(IpAddr);
@@ -50,13 +49,13 @@ pub async fn extract_identifier(
         .get(USER_ID)
         .and_then(|id| id.to_str().ok())
         .map(ToString::to_string)
-        .map(bucket::Id::Protected);
+        .map(BucketId::Protected);
 
     let public = request
         .extensions()
         .get::<ClientIp>()
         .map(|ClientIp(ip)| *ip)
-        .map(bucket::Id::Public);
+        .map(BucketId::Public);
 
     match protected.or(public) {
         Some(id) => {

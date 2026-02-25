@@ -1,38 +1,20 @@
-[package]
-name = "that-limit"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/core",
+    "crates/cache",
+    "crates/envoy-adapter",
+    "crates/http-adapter",
+    "crates/server",
+    "crates/test-utils"
+]
 
+resolver = "2"
 
-[features]
-default = ["http"]
-http = ["axum"]
-grpc = ["prost", "tonic", "envoy-types"]
-
-
-[dependencies]
-dotenv = "0.15.0"
+[workspace.dependencies]
 log = "0.4.29"
-simplelog = "0.12.2"
 thiserror = "2.0.18"
-dashmap = "6.1.0"
-ahash = "0.8.12"
+simplelog = "0.12.2"
 
-futures = "0.3"
-tower = "0.5.3"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "fs", "signal"] }
-
-serde = { version= "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-serde_with = { version = "3.16.1", features = ["time_0_3"] }
-
-redis = { version = "1.0.3", features = ["connection-manager", "tokio-comp"] }
-
-axum = { version = "0.8.8", optional = true }
-prost = { version = "0.14.3", optional = true }
-tonic = { version = "0.14.4", optional = true }
-envoy-types = { version = "0.7.2", optional = true }
-
-
-[dev-dependencies]
-testcontainers-modules = { version = "0.14.0", features = ["redis"] }
+tokio = { version = "1.49.0", default-features = false }
+redis = { version = "1.0.3", default-features = false }
+testcontainers-modules = { version = "0.14.0", default-features = false }

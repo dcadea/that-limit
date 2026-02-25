@@ -1,0 +1,22 @@
+[package]
+name = "that-limit-server"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["http"]
+http = ["that-limit-http-adapter"]
+envoy = ["that-limit-envoy-adapter"]
+
+[dependencies]
+that-limit-core = { path = "../core" }
+that-limit-cache = { path = "../cache" }
+that-limit-http-adapter = { path = "../http-adapter", optional = true }
+that-limit-envoy-adapter = { path = "../envoy-adapter", optional = true }
+
+tokio = { workspace = true, features = [ "rt-multi-thread", "signal" ] }
+log = { workspace = true }
+simplelog = { workspace = true }
+thiserror = { workspace = true }
+
+dotenv = "0.15.0"

@@ -18,7 +18,7 @@ pub enum Error {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[serde(rename_all = "snake_case")]
-enum Criteria {
+pub enum Criteria {
     Sub,
     Ip,
 }
@@ -27,25 +27,11 @@ enum Criteria {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Policy {
-    criteria: Criteria,
-    quota: u64,
-    lease_size: u64,
+    pub criteria: Criteria,
+    pub quota: u64,
+    pub lease_size: u64,
     #[serde_as(as = "DurationSeconds<u64>")]
-    reset_in: Duration,
-}
-
-impl Policy {
-    pub const fn quota(&self) -> u64 {
-        self.quota
-    }
-
-    pub const fn lease_size(&self) -> u64 {
-        self.lease_size
-    }
-
-    pub const fn reset_in(&self) -> Duration {
-        self.reset_in
-    }
+    pub reset_in: Duration,
 }
 
 #[serde_as]
@@ -65,6 +51,10 @@ pub struct Config {
     pub public: Policy,
 }
 
+/// # Errors
+///
+/// Will return `Err` if file could not be read from `path`
+/// or if it is not in correct json format.
 pub fn get(path: &str) -> Result<Config> {
     let content = fs::read(path)?;
     let config = serde_json::from_slice(&content)?;
@@ -95,16 +85,13 @@ impl Default for Config {
 }
 
 #[cfg(test)]
-use crate::core::bucket;
+use crate::bucket;
 
 #[cfg(test)]
 impl Config {
-    pub fn with_protected_quota(&self, quota: u64) -> Self {
+    pub fn with_cleanup(&self, cleanup: Cleanup) -> Self {
         Self {
-            protected: Policy {
-                quota,
-                ..self.protected.clone()
-            },
+            cleanup,
             ..self.clone()
         }
     }
@@ -119,34 +106,17 @@ impl Config {
         }
     }
 
-    pub fn with_protected_lease_size(&self, lease_size: u64) -> Self {
-        Self {
-            protected: Policy {
-                lease_size,
-                ..self.protected.clone()
-            },
-            ..self.clone()
-        }
-    }
-
-    pub fn with_cleanup(&self, cleanup: Cleanup) -> Self {
-        Self {
-            cleanup,
-            ..self.clone()
-        }
-    }
-
     pub const fn quota(&self, b_id: &bucket::Id) -> u64 {
         match b_id {
-            bucket::Id::Public(_) => self.public.quota(),
-            bucket::Id::Protected(_) => self.protected.quota(),
+            bucket::Id::Public(_) => self.public.quota,
+            bucket::Id::Protected(_) => self.protected.quota,
         }
     }
 
     pub const fn reset_in(&self, b_id: &bucket::Id) -> Duration {
         match b_id {
-            bucket::Id::Public(_) => self.public.reset_in(),
-            bucket::Id::Protected(_) => self.protected.reset_in(),
+            bucket::Id::Public(_) => self.public.reset_in,
+            bucket::Id::Protected(_) => self.protected.reset_in,
         }
     }
 }

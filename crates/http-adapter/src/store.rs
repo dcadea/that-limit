@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use axum::{Extension, extract::State, http::HeaderName, response::IntoResponse};
-
-use crate::core::{bucket, store::Store};
+use that_limit_core::{BucketId, Store};
 
 // TODO: see https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
 const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
 
 pub async fn consume(
-    Extension(bucket_id): Extension<bucket::Id>,
+    Extension(bucket_id): Extension<BucketId>,
     store: State<Arc<Store>>,
 ) -> super::Result<impl IntoResponse> {
     let tokens_left = store.consume(bucket_id).await?;
@@ -24,14 +23,15 @@ mod test {
         body::Body,
         http::{self, HeaderValue, Request, StatusCode},
     };
+    use that_limit_core::Config;
+    use that_limit_test_utils::config::ConfigExt;
     use tokio::time;
     use tower::ServiceExt;
 
     use super::*;
     use crate::{
-        core::cfg::Config,
-        http::bootstrap::{init_router, test::TestApp},
-        http::middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
+        app::{init_router, test::TestApp},
+        middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
     };
 
     const TEST_USER: &str = "valera";
@@ -55,7 +55,7 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let config = app.config();
-        let expected = format!("r={}", config.protected.lease_size() - 1);
+        let expected = format!("r={}", config.protected.lease_size - 1);
 
         let actual = response
             .headers()
@@ -98,7 +98,7 @@ mod test {
             assert_eq!(StatusCode::OK, response.status());
 
             let config = app.config();
-            let expected = format!("r={}", config.public.lease_size() - 1);
+            let expected = format!("r={}", config.public.lease_size - 1);
 
             let actual = response
                 .headers()
@@ -164,7 +164,7 @@ mod test {
         assert_eq!(StatusCode::OK, response.status());
 
         let config = app.config();
-        let expected = format!("r={}", config.protected.lease_size() - 2);
+        let expected = format!("r={}", config.protected.lease_size - 2);
 
         let actual = response
             .headers()
@@ -200,7 +200,7 @@ mod test {
         let config = Config::default()
             .with_protected_quota(1)
             .with_protected_lease_size(1);
-        let app = TestApp::with_cfg(config).await;
+        let app = TestApp::with_config(config).await;
         let r = init_router(app.app_state().clone());
 
         let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
@@ -215,7 +215,7 @@ mod test {
         let config = Config::default()
             .with_protected_quota(5)
             .with_protected_lease_size(2);
-        let app = TestApp::with_cfg(config).await;
+        let app = TestApp::with_config(config).await;
         let r = init_router(app.app_state().clone());
 
         // first request leases first batch of tokens
@@ -256,10 +256,10 @@ mod test {
     async fn should_return_zero_when_bucket_is_expired() {
         let reset_in = Duration::from_secs(1);
         let config = Config::default().with_protected_reset_in(reset_in);
-        let app = TestApp::with_cfg(config).await;
+        let app = TestApp::with_config(config).await;
         let r = init_router(app.app_state().clone());
 
-        let expected = format!("r={}", app.config().protected.lease_size() - 1);
+        let expected = format!("r={}", app.config().protected.lease_size - 1);
 
         // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
         let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();

@@ -1,0 +1,19 @@
+[package]
+name = "that-limit-http-adapter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+that-limit-core = { path = "../core" }
+
+log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+axum = "0.8.8"
+tower = "0.5.3"
+
+[dev-dependencies]
+testcontainers-modules = { workspace = true, features = ["redis"] }
+that-limit-cache = { path = "../cache" }
+that-limit-test-utils = { path = "../test-utils" }

@@ -19,7 +19,7 @@ cargo build         # Build the project
 ```
 
 ### Running and testing
-Service provides two features: `grpc` and `http`. Each respective feature will serve either http or grpc backend. At least one feature should be enabled. If no features are specified, service will default to `http`.
+Service provides two features: `envoy` and `http`. Each respective feature will serve either http or grpc (envoy compatible) backend. At least one feature should be enabled. If no features are specified, service will default to `http`.
 ```bash
 cargo run --features http   # Run the project
 cargo watch -x run          # Run the project with hot-reload
@@ -87,7 +87,7 @@ RUST_LOG=info
 
 CFG_PATH=static/config.json
 HTTP_PORT=8000
-GRPC_PORT=55051
+ENVOY_PORT=55051
 
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379

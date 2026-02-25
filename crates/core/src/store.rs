@@ -5,18 +5,13 @@ use std::{
 
 use dashmap::DashMap;
 use log::{debug, error};
+use that_limit_cache::{Incr, Lease};
 use tokio::sync::{Notify, broadcast::Sender};
 
-use crate::core::{
+use crate::{
     bucket::{self, Bucket},
-    cfg::Config,
-    integration::{
-        Command,
-        cache::{
-            self,
-            action::{Incr, Lease},
-        },
-    },
+    config::Config,
+    integration::Command,
 };
 use futures::future::join_all;
 
@@ -27,14 +22,14 @@ pub enum Error {
     #[error("Bucket {0} is exhausted, retry after: {1:?}")]
     Exhausted(bucket::Id, Option<Instant>),
     #[error(transparent)]
-    Cache(#[from] cache::Error),
+    Cache(#[from] that_limit_cache::Error),
 }
 
 pub struct Store {
     buckets: DashMap<bucket::Id, Bucket, ahash::RandomState>,
     refills: DashMap<bucket::Id, Arc<Notify>, ahash::RandomState>,
     config: Config,
-    redis: cache::Redis,
+    redis: that_limit_cache::Redis,
 }
 
 const CHUNK_SIZE: usize = 2000;
@@ -42,7 +37,7 @@ const CHUNK_SIZE: usize = 2000;
 impl Store {
     pub fn new(
         config: Config,
-        redis: cache::Redis,
+        redis: that_limit_cache::Redis,
         shutdown_tx: Option<Sender<Command>>,
     ) -> Arc<Self> {
         let buckets = DashMap::with_capacity_and_hasher_and_shard_amount(
@@ -161,6 +156,9 @@ impl Store {
 }
 
 impl Store {
+    /// # Errors
+    ///
+    /// Will return `Err` if bucket associated with `b_id` is exhausted.
     pub async fn consume(&self, b_id: bucket::Id) -> Result<u64> {
         self.ensure_refilled(&b_id).await?;
 
@@ -217,9 +215,9 @@ impl Store {
 
         let lease_action = Lease::new(
             b_id.clone(),
-            criteria.lease_size(),
-            criteria.quota(),
-            criteria.reset_in(),
+            criteria.lease_size,
+            criteria.quota,
+            criteria.reset_in,
         );
 
         let (leased, ttl) = self.redis.execute(lease_action).await?;
@@ -272,17 +270,15 @@ mod test {
     use std::{net::IpAddr, sync::Arc, time::Duration};
 
     use testcontainers_modules::testcontainers::{ImageExt, runners::AsyncRunner};
+    use that_limit_test_utils::cache::Get;
     use tokio::{sync::broadcast, time};
 
     use super::*;
 
-    use crate::core::{
+    use crate::{
         bucket,
-        cfg::{Cleanup, Config},
-        integration::{
-            Command,
-            cache::{self, action::test::Get},
-        },
+        config::{Cleanup, Config},
+        integration::Command,
     };
 
     #[tokio::test]
@@ -295,7 +291,9 @@ mod test {
             .unwrap();
         let host = rc.get_host().await.unwrap().to_string();
         let port = rc.get_host_port_ipv4(6379).await.unwrap();
-        let redis = cache::Config::test(host, port).connect().await;
+        let redis = that_limit_cache::CacheConfig::new(host, port)
+            .connect()
+            .await;
 
         let cfg = Config::default()
             .with_cleanup(Cleanup {
@@ -336,7 +334,9 @@ mod test {
             .unwrap();
         let host = rc.get_host().await.unwrap().to_string();
         let port = rc.get_host_port_ipv4(6379).await.unwrap();
-        let redis = cache::Config::test(host, port).connect().await;
+        let redis = that_limit_cache::CacheConfig::new(host, port)
+            .connect()
+            .await;
 
         let cfg = Config::default().with_cleanup(Cleanup {
             enabled: true,
@@ -374,15 +374,15 @@ mod test {
 
         // tokens should return to redis
         assert_eq!(
-            cfg.protected.quota(),
+            cfg.protected.quota,
             redis.execute(Get::<_, u64>::new(valera)).await.unwrap()
         );
         assert_eq!(
-            cfg.protected.quota(),
+            cfg.protected.quota,
             redis.execute(Get::<_, u64>::new(jora)).await.unwrap()
         );
         assert_eq!(
-            cfg.public.quota(),
+            cfg.public.quota,
             redis.execute(Get::<_, u64>::new(public)).await.unwrap()
         )
     }
