@@ -1,0 +1,13 @@
+[package]
+name = "that-limit-envoy-adapter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+that-limit-core = { path = "../core" }
+
+log = { workspace = true }
+thiserror = { workspace = true }
+
+tonic = "0.14.4"
+envoy-types = "0.7.2"

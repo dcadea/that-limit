@@ -25,7 +25,7 @@ impl Display for Id {
 }
 
 #[derive(Debug)]
-pub(super) struct Bucket {
+pub struct Bucket {
     tokens: AtomicU64,
     expires_at: Instant,
     exhausted: AtomicBool,

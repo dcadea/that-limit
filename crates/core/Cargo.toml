@@ -1,0 +1,23 @@
+[package]
+name = "that-limit-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+that-limit-cache = { path = "../cache" }
+
+log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+
+dashmap = "6.1.0"
+ahash = "0.8.12"
+futures = "0.3"
+
+serde = { version= "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_with = { version = "3.16.1", features = ["time_0_3"] }
+
+[dev-dependencies]
+testcontainers-modules = { workspace = true }
+that-limit-test-utils = { path = "../test-utils" }
