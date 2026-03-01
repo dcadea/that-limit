@@ -28,14 +28,19 @@ impl Config {
         let host = env::var("REDIS_HOST").ok();
         let port = env::var("REDIS_PORT")
             .ok()
-            .and_then(|p| p.parse::<u16>().ok());
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or_else(|| {
+                warn!("Fallback to default REDIS_PORT");
+                6379
+            });
 
-        if let (Some(host), Some(port)) = (host, port) {
-            Some(Self { host, port })
-        } else {
-            warn!("REDIS env is not configured");
-            None
-        }
+        host.map_or_else(
+            || {
+                warn!("REDIS_HOST is not configured");
+                None
+            },
+            |host| Some(Self { host, port }),
+        )
     }
 
     /// # Panics

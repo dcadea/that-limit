@@ -1,0 +1,31 @@
+name: that-limit-http
+
+services:
+  server:
+    container_name: that-limit-http.server.dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        provider: http
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_HOST: that-limit-http.redis.dev
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: that-limit-http.redis.dev
+    ports:
+      - "6380:6379"
+      - "8002:8001"
+    volumes:
+      - ./docker-volumes/dev/http/redis/data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

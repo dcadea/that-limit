@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: that-limit
+  name: that-limit-http
   labels:
-    app: that-limit
+    app: that-limit-http
 spec:
   replicas: 5
   selector:
     matchLabels:
-      app: that-limit
+      app: that-limit-http
   template:
     metadata:
       labels:
-        app: that-limit
+        app: that-limit-http
     spec:
       containers:
-      - name: that-limit
-        image: that-limit:dev
+      - name: that-limit-http
+        image: that-limit-http:dev
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000

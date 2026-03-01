@@ -21,7 +21,9 @@ cargo build         # Build the project
 ### Running and testing
 Service provides two features: `envoy` and `http`. Each respective feature will serve either http or grpc (envoy compatible) backend. At least one feature should be enabled. If no features are specified, service will default to `http`.
 ```bash
-cargo run --features http   # Run the project
+cargo run \
+    -p that-limit-server \
+    --features http         # Run the project
 cargo watch -x run          # Run the project with hot-reload
                             # (req: `cargo install cargo-watch`)
 cargo test                  # Run the tests
@@ -29,15 +31,15 @@ cargo test                  # Run the tests
 just clippy                 # Run pedantic linter
 just cov                    # Run tests with coverage
 ```
-Optionally you can run the project with `cargo run --release` to enable optimizations.<br>
-To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run`.<br>
+Optionally you can run the project with `cargo run -p that-limit-server --release` to enable optimizations.<br>
+To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run -p that-limit-server`.<br>
 Or you could just use an IDE like RustRover or Zed :rocket:.
 
 
 ### With Docker
 ```bash
 cd that-limit
-docker build -t that-limit:dev .
+docker build --build-arg provider=http -t that-limit:dev .
 docker run -d -p 8000:8000 that-limit:dev
 ```
 
@@ -45,34 +47,14 @@ docker run -d -p 8000:8000 that-limit:dev
 Run `just` to see all available recipes:
 ```text
 Available recipes:
-    clippy                                         # Run pedantic linter
-    cov                                            # Run tests with coverage
-    default
-    dev feature="http"                             # Start dependencies in Docker + run Rust app with hot reload
-    dev-down compose_file="docker-compose.dev.yml" # Stop Docker dependencies
-    dev-up compose_file="docker-compose.dev.yml"   # Start dependencies in Docker (redis, etc)
-    minikube-build image="that-limit:dev"          # Build a Docker image inside the minikube env
-    minikube-deploy                                # Apply changes to create resourses in the cluster
-    minikube-start                                 # Start the minikube
-    minikube-up                                    # Start-build-deploy in one go
-```
-
-Common workflow:
-
-```bash
-just dev        # Start local development stack with hot reload
-just dev-up     # Start Docker dependencies only
-just dev-down   # Stop Docker dependencies
-just clippy     # Run formatting + strict linting
+    clippy                   # Run pedantic linter
+    cov                      # Run tests with coverage
+    dev feature="http"       # Run app server with hot reload
+    docker provider="http"   # Start in docker
+    minikube provider="http" # Start in minikube cluster
 ```
 
 Additionally you can run `minikube dashboard` to check cluster in web console.
-
-Set up a tunnel to the service by running `minikube service that-limit-lb`. <br>
-This will give you an output with the url you can access to reach the service via LB:
-| NAMESPACE | NAME          | TARGET PORT | URL                    |
-|-----------|---------------|-------------|------------------------|
-| default   | that-limit-lb |             | http://127.0.0.1:56706 |
 
 ### Configuration
 Application will not start without the **required** environment configuration. <br>
