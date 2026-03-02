@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: that-limit-envoy
+  namespace: that-limit-envoy-ns
+spec:
+  type: ClusterIP
+  selector:
+    app: that-limit-envoy
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: that-limit-envoy
+  namespace: that-limit-envoy-ns
+  labels:
+    app: that-limit-envoy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: that-limit-envoy
+  template:
+    metadata:
+      labels:
+        app: that-limit-envoy
+    spec:
+      containers:
+      - name: that-limit-envoy
+        image: that-limit-envoy:dev
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50051
+        env:
+        - name: REDIS_HOST
+          value: redis
+        - name: REDIS_PORT
+          value: "6379"
+        livenessProbe:
+          tcpSocket:
+            port: 50051
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: 50051
+          initialDelaySeconds: 5
+          periodSeconds: 5

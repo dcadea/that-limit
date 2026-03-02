@@ -24,6 +24,15 @@ impl RateLimitService for Service {
         request: Request<RateLimitRequest>,
     ) -> Result<Response<RateLimitResponse>, Status> {
         let req = request.into_inner();
+
+        // TODO: introduce domain in config
+        if req.domain != "that-limit" {
+            return Ok(Response::new(RateLimitResponse {
+                overall_code: Code::Ok as i32,
+                ..Default::default()
+            }));
+        }
+
         let b_id = extract_identifier(&req)?;
 
         let tokens_left = self.store.consume(b_id).await.map_err(super::Error::from)?;
@@ -34,6 +43,11 @@ impl RateLimitService for Service {
             } else {
                 Code::ResourceExhausted as i32
             },
+            // TODO:
+            // response_headers_to_add: vec![HeaderValue {
+            //     key: "x-ratelimit-remaining".into(),
+            //     value: tokens_left.to_string(),
+            // }],
             ..Default::default()
         };
 

@@ -1,6 +1,7 @@
 use std::{env, sync::Arc};
 
 use envoy_types::pb::envoy::service::ratelimit::v3::rate_limit_service_server::RateLimitServiceServer;
+use log::info;
 use that_limit_core::Store;
 use tonic::transport::Server;
 
@@ -18,13 +19,14 @@ where
         .parse()
         .expect("Failed to parse server address");
 
-    if let Err(e) = Server::builder()
+    match Server::builder()
         .add_service(RateLimitServiceServer::new(store::Service::new(
             store.clone(),
         )))
         .serve_with_shutdown(addr, signal)
         .await
     {
-        panic!("Failed to start application: {e:?}")
+        Ok(_) => info!("Started on port: {port}"),
+        Err(e) => panic!("Failed to start application: {e:?}"),
     }
 }

@@ -1,22 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: that-limit-http-lb
+  namespace: that-limit-http-ns
+spec:
+  type: LoadBalancer
+  selector:
+    app: that-limit-http
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: that-limit
+  name: that-limit-http
+  namespace: that-limit-http-ns
   labels:
-    app: that-limit
+    app: that-limit-http
 spec:
   replicas: 5
   selector:
     matchLabels:
-      app: that-limit
+      app: that-limit-http
   template:
     metadata:
       labels:
-        app: that-limit
+        app: that-limit-http
     spec:
       containers:
-      - name: that-limit
-        image: that-limit:dev
+      - name: that-limit-http
+        image: that-limit-http:dev
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000

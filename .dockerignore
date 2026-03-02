@@ -12,7 +12,7 @@ docker-compose*.yaml
 .git/
 .gitignore
 
-Makefile
+justfile
 README.md
 *.log
 

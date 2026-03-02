@@ -1,0 +1,30 @@
+apiVersion: getambassador.io/v3alpha1
+kind: RateLimitService
+metadata:
+  name: global-ratelimiter
+  namespace: emissary
+spec:
+  service: "that-limit-envoy.that-limit-envoy-ns:50051"
+  protocol_version: "v3"
+  domain: that-limit
+
+---
+apiVersion: getambassador.io/v3alpha1
+kind: Mapping
+metadata:
+  name: messenger-api-route
+  namespace: emissary
+spec:
+  hostname: "*"
+  prefix: /
+  service: messenger-api:80
+
+  labels:
+    emissary:
+      - request_label_group:
+        - user_id:
+          request_headers:
+            key: "user_id"
+            header_name: "x-user-id"
+        - remote_address:
+            key: remote_address
