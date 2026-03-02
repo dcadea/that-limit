@@ -8,7 +8,9 @@ minikube provider="http":
     minikube status >/dev/null 2>&1 || minikube start
     kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
-    minikube image build --build-arg provider={{ provider }} -t that-limit-{{ provider }}:dev .
+    docker build --build-arg provider={{ provider }} -t that-limit-{{ provider }}:dev .
+    minikube image load that-limit-{{ provider }}:dev
+
     kubectl apply -f k8s/{{ provider }}
 
     kubectl wait \
