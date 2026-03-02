@@ -8,16 +8,30 @@ minikube provider="http":
     minikube status >/dev/null 2>&1 || minikube start
     kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
+    if [ "{{ provider }}" = "envoy" ]; then \
+        kubectl get ns emissary >/dev/null 2>&1 || just install-emissary; \
+    fi
+
     docker build --build-arg provider={{ provider }} -t that-limit-{{ provider }}:dev .
     minikube image load that-limit-{{ provider }}:dev
 
     kubectl apply -f k8s/{{ provider }}
 
     kubectl wait \
-      --for=condition=Ready pod \
-      -l app=that-limit-{{ provider }} \
-      --timeout=120s
-    # minikube service that-limit-{{ provider }}-lb
+        --for=condition=Ready pod \
+        -n that-limit-envoy-ns \
+        -l app=that-limit-{{ provider }} \
+        --timeout=120s
+
+install-emissary:
+    kubectl apply -f https://app.getambassador.io/yaml/emissary/3.9.0/emissary-crds.yaml
+    kubectl wait --for=condition=Established crd/ratelimitservices.getambassador.io --timeout=180s
+    kubectl wait --for=condition=Established crd/mappings.getambassador.io --timeout=180s
+
+    kubectl create namespace emissary --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl apply -f https://app.getambassador.io/yaml/emissary/3.9.0/emissary-emissaryns.yaml
+    kubectl wait -n emissary --for=condition=Available deployment/emissary-ingress --timeout=180s
 
 # Start in docker
 docker provider="http":

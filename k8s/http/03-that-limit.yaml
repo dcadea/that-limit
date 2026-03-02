@@ -1,50 +1,55 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: that-limit-envoy
+  name: that-limit-http-lb
+  namespace: that-limit-http-ns
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
-    app: that-limit-envoy
+    app: that-limit-http
   ports:
-  - name: grpc
-    port: 50051
-    targetPort: 50051
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: that-limit-envoy
+  name: that-limit-http
+  namespace: that-limit-http-ns
   labels:
-    app: that-limit-envoy
+    app: that-limit-http
 spec:
-  replicas: 3
+  replicas: 5
   selector:
     matchLabels:
-      app: that-limit-envoy
+      app: that-limit-http
   template:
     metadata:
       labels:
-        app: that-limit-envoy
+        app: that-limit-http
     spec:
       containers:
-      - name: that-limit-envoy
-        image: that-limit-envoy:dev
+      - name: that-limit-http
+        image: that-limit-http:dev
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 50051
+        - containerPort: 8000
         env:
         - name: REDIS_HOST
           value: redis
         - name: REDIS_PORT
           value: "6379"
         livenessProbe:
-          tcpSocket:
-            port: 50051
+          httpGet:
+            path: /health
+            port: 8000
           initialDelaySeconds: 10
           periodSeconds: 5
         readinessProbe:
-          tcpSocket:
-            port: 50051
+          httpGet:
+            path: /health
+            port: 8000
           initialDelaySeconds: 5
           periodSeconds: 5
