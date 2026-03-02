@@ -17,7 +17,7 @@ minikube provider="http":
       --for=condition=Ready pod \
       -l app=that-limit-{{ provider }} \
       --timeout=120s
-    minikube service that-limit-{{ provider }}-lb
+    # minikube service that-limit-{{ provider }}-lb
 
 # Start in docker
 docker provider="http":

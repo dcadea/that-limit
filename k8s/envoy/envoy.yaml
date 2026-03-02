@@ -33,6 +33,7 @@ spec:
 
         ports:
         - containerPort: 8080
+        - containerPort: 9901
 
         volumeMounts:
         - name: config
@@ -49,6 +50,13 @@ metadata:
   name: envoy-config
 data:
   envoy.yaml: |
+    admin:
+      access_log_path: /tmp/admin_access.log
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+
     static_resources:
 
       listeners:
@@ -101,7 +109,7 @@ data:
       clusters:
       - name: upstream_service
         connect_timeout: 5s
-        type: logical_dns
+        type: strict_dns
         lb_policy: round_robin
         load_assignment:
           cluster_name: upstream_service
@@ -117,7 +125,7 @@ data:
         connect_timeout: 2s
         type: logical_dns
         lb_policy: round_robin
-        http2_protocol_options: {}
+        typed_extension_protocol_options: {}
         load_assignment:
           cluster_name: rate_limit_service
           endpoints:
