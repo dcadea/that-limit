@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Instant};
 
 use dashmap::DashMap;
 use log::{debug, error};
@@ -194,7 +191,7 @@ impl Store {
                     let n = Arc::new(Notify::new());
                     entry.insert(n.clone());
 
-                    let res = self.lease(b_id.clone()).await;
+                    let res = self.lease(b_id).await;
 
                     if let Some((_, n_to_notify)) = self.refills.remove(b_id) {
                         n_to_notify.notify_waiters();
@@ -207,33 +204,24 @@ impl Store {
         }
     }
 
-    async fn lease(&self, b_id: bucket::Id) -> Result<()> {
+    async fn lease(&self, b_id: &bucket::Id) -> Result<()> {
         let criteria = match b_id {
             bucket::Id::Public(_) => &self.config.public,
             bucket::Id::Protected(_) => &self.config.protected,
         };
 
-        let lease_action = Lease::new(
-            b_id.clone(),
-            criteria.lease_size,
-            criteria.quota,
-            criteria.reset_in,
-        );
+        let lease_action = Lease::new(b_id, criteria.lease_size, criteria.quota, criteria.reset_in);
 
         let (leased, ttl) = self.redis.execute(lease_action).await?;
 
         if leased == 0 {
-            let expires_at = self.mark_as_exhausted(&b_id);
-            return Err(Error::Exhausted(b_id, expires_at));
+            let expires_at = self.mark_as_exhausted(b_id);
+            return Err(Error::Exhausted(b_id.clone(), expires_at));
         }
 
         debug!("Leased {leased} tokens for {b_id:?}");
-        self.add(b_id, leased, ttl);
+        self.buckets.insert(b_id.clone(), Bucket::new(leased, ttl));
         Ok(())
-    }
-
-    fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
-        self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 
     fn check(&self, b_id: &bucket::Id) -> Result<bool> {
@@ -262,6 +250,16 @@ impl Store {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+use std::time::Duration;
+
+#[cfg(test)]
+impl Store {
+    fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
+        self.buckets.insert(b_id, Bucket::new(tokens, ttl));
     }
 }
 
@@ -306,8 +304,8 @@ mod test {
 
         let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx));
 
-        let valera = bucket::Id::Protected("valera".to_string());
-        let jora = bucket::Id::Protected("jora".to_string());
+        let valera = bucket::Id::Protected("valera".into());
+        let jora = bucket::Id::Protected("jora".into());
         let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
 
         for b_id in [&valera, &jora, &public] {
@@ -354,8 +352,8 @@ mod test {
 
         let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx.clone()));
 
-        let valera = bucket::Id::Protected("valera".to_string());
-        let jora = bucket::Id::Protected("jora".to_string());
+        let valera = bucket::Id::Protected("valera".into());
+        let jora = bucket::Id::Protected("jora".into());
         let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
 
         for b_id in [&valera, &jora, &public] {

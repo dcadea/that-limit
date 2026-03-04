@@ -2,17 +2,17 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Add,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Id {
     Public(IpAddr),
-    Protected(String),
+    Protected(Arc<str>),
 }
 
 impl Display for Id {

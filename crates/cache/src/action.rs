@@ -82,7 +82,7 @@ const LEASE_SCRIPT: &str = r"
     return {to_lease, ttl}
 ";
 
-impl<K> Action for Lease<K>
+impl<K> Action for Lease<&K>
 where
     K: Key + Sync + Debug + ToString,
 {

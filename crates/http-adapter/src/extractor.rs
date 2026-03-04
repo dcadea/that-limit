@@ -21,7 +21,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         if let Some(user_id) = parts.headers.get(&USER_ID).and_then(|v| v.to_str().ok()) {
-            return Ok(Identifier(BucketId::Protected(user_id.to_string())));
+            return Ok(Self(BucketId::Protected(user_id.into())));
         }
 
         let ip = parts
@@ -34,6 +34,6 @@ where
             .and_then(|s| s.trim().parse::<IpAddr>().ok())
             .ok_or(super::Error::Unauthorized)?;
 
-        Ok(Identifier(BucketId::Public(ip)))
+        Ok(Self(BucketId::Public(ip)))
     }
 }

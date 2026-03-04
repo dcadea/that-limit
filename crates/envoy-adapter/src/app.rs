@@ -28,7 +28,7 @@ where
         .serve_with_shutdown(addr, signal)
         .await
     {
-        Ok(_) => info!("Started on port: {port}"),
+        Ok(()) => info!("Started on port: {port}"),
         Err(e) => panic!("Failed to start application: {e:?}"),
     }
 }

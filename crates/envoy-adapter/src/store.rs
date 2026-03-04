@@ -60,7 +60,7 @@ fn extract_identifier(req: &RateLimitRequest) -> super::Result<BucketId> {
         .iter()
         .flat_map(|d| &d.entries)
         .find_map(|entry| match entry.key.as_str() {
-            "user_id" => Some(BucketId::Protected(entry.value.clone())),
+            "user_id" => Some(BucketId::Protected(entry.value.as_str().into())),
             "remote_address" => entry.value.parse().map(BucketId::Public).ok(),
             _ => None,
         })
