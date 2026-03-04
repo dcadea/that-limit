@@ -75,7 +75,72 @@ REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 ```
 
-### Stress test with wrk
-```bash
-wrk -t4 -c150 -d30s -s ./tests/performance/protected.lua http://127.0.0.1:8000/consume
+## HTTP Adapter stress test
+Apple M1 Pro 10 cores (8p + 2e) - 32GB LPDDR5
+### wrk
+```
+$ wrk -t4 -c150 -d30s -s ./tests/performance/protected.lua http://127.0.0.1:8000/consume
+
+Running 30s test @ http://127.0.0.1:8000/consume
+  4 threads and 150 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   838.68us  200.34us  12.68ms   89.64%
+    Req/Sec    40.85k     2.15k   56.99k    97.17%
+  4890280 requests in 30.10s, 438.39MB read
+Requests/sec: 162455.13
+Transfer/sec:     14.56MB
+```
+### k6
+
+```
+$ k6 run tests/performance/protected.js
+
+         /\      Grafana   /‾‾/
+    /\  /  \     |\  __   /  /
+   /  \/    \    | |/ /  /   ‾‾\
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/
+
+     execution: local
+        script: tests/performance/protected.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 500 max VUs, 2m30s max duration (incl. graceful stop):
+              * default: Up to 500 looping VUs for 2m0s over 3 stages (gracefulRampDown: 30s, gracefulStop: 30s)
+
+
+  █ THRESHOLDS
+
+    http_req_duration
+    ✓ 'p(99)<10' p(99)=7.84ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+  █ TOTAL RESULTS
+
+    checks_total.......: 11779320 98158.380807/s
+    checks_succeeded...: 100.00%  11779320 out of 11779320
+    checks_failed......: 0.00%    0 out of 11779320
+
+    ✓ is status 200 or 429
+
+    HTTP
+    http_req_duration..............: avg=2.03ms min=25µs    med=1.68ms max=57.19ms p(90)=4.19ms p(95)=5.05ms
+      { expected_response:true }...: avg=2.03ms min=25µs    med=1.68ms max=57.19ms p(90)=4.19ms p(95)=5.05ms
+    http_req_failed................: 0.00%    0 out of 11779320
+    http_reqs......................: 11779320 98158.380807/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.05ms min=41.45µs med=2.77ms max=63.39ms p(90)=5.53ms p(95)=6.95ms
+    iterations.....................: 11779320 98158.380807/s
+    vus............................: 1        min=1             max=500
+    vus_max........................: 500      min=500           max=500
+
+    NETWORK
+    data_received..................: 1.1 GB   9.2 MB/s
+    data_sent......................: 1.3 GB   11 MB/s
+
+running (2m00.0s), 000/500 VUs, 11779320 complete and 0 interrupted iterations
+default ✓ [======================================] 000/500 VUs  2m0s
 ```

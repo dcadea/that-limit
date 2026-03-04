@@ -47,15 +47,16 @@ where
     let state = AppState::new(store);
     let r = init_router(state);
 
-    match axum::serve(
+    info!("Starting on port: {port}");
+
+    if let Err(e) = axum::serve(
         listener,
         r.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(signal)
     .await
     {
-        Ok(_) => info!("Started on port: {port}"),
-        Err(e) => panic!("Failed to start application: {e:?}"),
+        panic!("Failed to start application: {e:?}")
     }
 }
 

@@ -19,10 +19,12 @@ where
         .parse()
         .expect("Failed to parse server address");
 
+    let store_service = store::Service::new(store.clone());
+
+    info!("Starting on port: {port}");
+
     match Server::builder()
-        .add_service(RateLimitServiceServer::new(store::Service::new(
-            store.clone(),
-        )))
+        .add_service(RateLimitServiceServer::new(store_service))
         .serve_with_shutdown(addr, signal)
         .await
     {
