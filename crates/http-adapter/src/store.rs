@@ -33,7 +33,7 @@ mod test {
     use super::*;
     use crate::{
         app::{init_router, test::TestApp},
-        extractor::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
+        extractor::{USER_ID, X_FORWARDED_FOR, X_REAL_IP},
     };
 
     const TEST_USER: &str = "valera";
@@ -75,12 +75,11 @@ mod test {
         let r = init_router(app.app_state().clone());
 
         let ip_headers = [
-            (FORWARDED, "89.28.75.89"),
-            (X_FORWARDED_FOR, "28.75.89.89"),
+            (X_REAL_IP, "89.28.75.89"),
             (X_REAL_IP, "89.75.28.89"),
-            (FORWARDED, "2001:db8::1"),
-            (X_FORWARDED_FOR, "fe80::1"),
             (X_REAL_IP, "::ffff:192.0.2.128"),
+            (X_FORWARDED_FOR, "28.75.89.89"),
+            (X_FORWARDED_FOR, "fe80::1, 2001:db8::1"),
         ];
 
         for (h, ip) in ip_headers {
@@ -119,19 +118,19 @@ mod test {
         let r = init_router(app.app_state().clone());
 
         let ip_headers = [
-            (FORWARDED, ""),
+            (X_REAL_IP, ""),
             (X_FORWARDED_FOR, "1.2.3"),
             (X_REAL_IP, "256.1.1.1"),
-            (FORWARDED, "1.2.3.4 "),
+            (X_FORWARDED_FOR, "1.2.3.4 "),
             (X_FORWARDED_FOR, "01.02.03.04"),
             (X_REAL_IP, "1..3.4"),
-            (FORWARDED, ":"),
+            (X_REAL_IP, ":"),
             (X_FORWARDED_FOR, ":::"),
             (X_REAL_IP, "2001::db8::1"),
-            (FORWARDED, "2001:dg8::1"),
+            (X_FORWARDED_FOR, "2001:dg8::1"),
             (X_FORWARDED_FOR, "fe80::1%eth0"),
             (X_REAL_IP, "::ffff:999.1.1.1"),
-            (FORWARDED, "12345::1"),
+            (X_REAL_IP, "12345::1"),
         ];
 
         for (h, ip) in ip_headers {

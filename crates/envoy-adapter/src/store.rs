@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::IpAddr, sync::Arc};
 
 use envoy_types::pb::envoy::service::ratelimit::v3::{
     RateLimitRequest, RateLimitResponse, rate_limit_service_server::RateLimitService,
@@ -61,7 +61,12 @@ fn extract_identifier(req: &RateLimitRequest) -> super::Result<BucketId> {
         .flat_map(|d| &d.entries)
         .find_map(|entry| match entry.key.as_str() {
             "user_id" => Some(BucketId::Protected(entry.value.as_str().into())),
-            "remote_address" => entry.value.parse().map(BucketId::Public).ok(),
+            "remote_address" => entry
+                .value
+                .split(',')
+                .next()
+                .and_then(|s| s.parse::<IpAddr>().ok())
+                .map(BucketId::Public),
             _ => None,
         })
         .ok_or(super::Error::Unauthorized)
