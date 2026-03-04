@@ -112,35 +112,35 @@ $ k6 run tests/performance/protected.js
   █ THRESHOLDS
 
     http_req_duration
-    ✓ 'p(99)<10' p(99)=7.84ms
+    ✓ 'p(99)<10' p(99)=7.68ms
 
     http_req_failed
     ✓ 'rate<0.01' rate=0.00%
 
   █ TOTAL RESULTS
 
-    checks_total.......: 11779320 98158.380807/s
-    checks_succeeded...: 100.00%  11779320 out of 11779320
-    checks_failed......: 0.00%    0 out of 11779320
+    checks_total.......: 12201053 101675.096819/s
+    checks_succeeded...: 100.00%  12201053 out of 12201053
+    checks_failed......: 0.00%    0 out of 12201053
 
     ✓ is status 200 or 429
 
     HTTP
-    http_req_duration..............: avg=2.03ms min=25µs    med=1.68ms max=57.19ms p(90)=4.19ms p(95)=5.05ms
-      { expected_response:true }...: avg=2.03ms min=25µs    med=1.68ms max=57.19ms p(90)=4.19ms p(95)=5.05ms
-    http_req_failed................: 0.00%    0 out of 11779320
-    http_reqs......................: 11779320 98158.380807/s
+    http_req_duration..............: avg=2.01ms min=21µs    med=1.69ms max=103.73ms p(90)=4.08ms p(95)=4.9ms
+      { expected_response:true }...: avg=2.01ms min=21µs    med=1.69ms max=103.73ms p(90)=4.08ms p(95)=4.9ms
+    http_req_failed................: 0.00%    0 out of 12201053
+    http_reqs......................: 12201053 101675.096819/s
 
     EXECUTION
-    iteration_duration.............: avg=3.05ms min=41.45µs med=2.77ms max=63.39ms p(90)=5.53ms p(95)=6.95ms
-    iterations.....................: 11779320 98158.380807/s
+    iteration_duration.............: avg=2.97ms min=38.95µs med=2.71ms max=119.23ms p(90)=5.39ms p(95)=6.76ms
+    iterations.....................: 12201053 101675.096819/s
     vus............................: 1        min=1             max=500
     vus_max........................: 500      min=500           max=500
 
     NETWORK
-    data_received..................: 1.1 GB   9.2 MB/s
-    data_sent......................: 1.3 GB   11 MB/s
+    data_received..................: 1.1 GB   9.5 MB/s
+    data_sent......................: 1.4 GB   11 MB/s
 
-running (2m00.0s), 000/500 VUs, 11779320 complete and 0 interrupted iterations
+running (2m00.0s), 000/500 VUs, 12201053 complete and 0 interrupted iterations
 default ✓ [======================================] 000/500 VUs  2m0s
 ```

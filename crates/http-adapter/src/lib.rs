@@ -8,7 +8,7 @@ use log::error;
 use that_limit_core::{ConfigError, StoreError};
 
 mod app;
-mod middleware;
+mod extractor;
 mod state;
 mod store;
 

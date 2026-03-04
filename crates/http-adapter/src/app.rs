@@ -3,27 +3,15 @@ use std::{env, net::SocketAddr, sync::Arc};
 use axum::{
     Router,
     http::StatusCode,
-    middleware::from_fn,
     routing::{get, post},
 };
 use log::info;
 use that_limit_core::Store;
-use tower::ServiceBuilder;
 
-use crate::{
-    middleware::{extract_identifier, extract_ip},
-    state::AppState,
-    store,
-};
+use crate::{state::AppState, store};
 
 pub fn init_router(s: AppState) -> Router {
-    let protected = Router::new()
-        .route("/consume", post(store::consume))
-        .route_layer(
-            ServiceBuilder::new()
-                .layer(from_fn(extract_ip))
-                .layer(from_fn(extract_identifier)),
-        );
+    let protected = Router::new().route("/consume", post(store::consume));
 
     Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))

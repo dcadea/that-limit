@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use axum::{Extension, extract::State, http::HeaderName, response::IntoResponse};
-use that_limit_core::{BucketId, Store};
+use axum::{extract::State, http::HeaderName, response::IntoResponse};
+use that_limit_core::Store;
+
+use crate::extractor::Identifier;
 
 // TODO: see https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
 const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
 
 pub async fn consume(
-    Extension(bucket_id): Extension<BucketId>,
+    Identifier(bucket_id): Identifier,
     store: State<Arc<Store>>,
 ) -> super::Result<impl IntoResponse> {
     let tokens_left = store.consume(bucket_id).await?;
@@ -31,7 +33,7 @@ mod test {
     use super::*;
     use crate::{
         app::{init_router, test::TestApp},
-        middleware::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
+        extractor::{FORWARDED, USER_ID, X_FORWARDED_FOR, X_REAL_IP},
     };
 
     const TEST_USER: &str = "valera";
