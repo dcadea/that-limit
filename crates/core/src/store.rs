@@ -14,6 +14,7 @@ use futures::future::join_all;
 
 type Result<T> = std::result::Result<T, Error>;
 
+// TODO: add dedicated error for expired
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Bucket {0} is exhausted, retry after: {1:?}")]
@@ -162,7 +163,7 @@ impl Store {
         if let Some(b) = self.buckets.get(&b_id) {
             if b.is_expired() {
                 debug!("Bucket {b_id} expired, cleaning up");
-                drop(b);
+                drop(b); // TODO: test if this will result in infinite lease
                 self.buckets.remove(&b_id);
                 return Ok(0);
             }

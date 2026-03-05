@@ -32,3 +32,48 @@ where
         Err(e) => panic!("Failed to start application: {e:?}"),
     }
 }
+
+#[cfg(test)]
+pub mod test {
+    use envoy_types::pb::envoy::service::ratelimit::v3::{
+        rate_limit_service_client::RateLimitServiceClient,
+        rate_limit_service_server::RateLimitServiceServer,
+    };
+    use hyper_util::rt::TokioIo;
+    use tokio::io::DuplexStream;
+    use tonic::transport::{Channel, Endpoint, Server, Uri};
+    use tower::service_fn;
+
+    use crate::store::Service;
+
+    pub async fn init_app(
+        svc: Service,
+        (client, server): (DuplexStream, DuplexStream),
+    ) -> RateLimitServiceClient<Channel> {
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(RateLimitServiceServer::new(svc))
+                .serve_with_incoming(tokio_stream::once(Ok::<_, std::io::Error>(server)))
+                .await
+                .unwrap();
+        });
+
+        let mut client = Some(client);
+        RateLimitServiceClient::new(
+            Endpoint::from_static("http://[::]:50051")
+                .connect_with_connector(service_fn(move |_: Uri| {
+                    let client = client.take();
+
+                    async move {
+                        if let Some(client) = client {
+                            Ok(TokioIo::new(client))
+                        } else {
+                            Err(std::io::Error::other("Client already taken"))
+                        }
+                    }
+                }))
+                .await
+                .unwrap(),
+        )
+    }
+}

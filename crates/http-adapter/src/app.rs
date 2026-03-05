@@ -52,11 +52,9 @@ where
 pub mod test {
     use std::sync::Arc;
 
-    use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
-    use that_limit_cache::CacheConfig;
-    use that_limit_core::{Command, Config, Store};
-    use that_limit_test_utils::logger::init_test_logger;
-    use tokio::sync::broadcast;
+    use testcontainers_modules::testcontainers::ContainerAsync;
+    use that_limit_core::Config;
+    use that_limit_test_utils::{logger::init_test_logger, store::init_store};
 
     use crate::state::AppState;
 
@@ -76,29 +74,12 @@ pub mod test {
         pub async fn with_config(cfg: Config) -> Self {
             init_test_logger();
 
-            let rc = testcontainers_modules::redis::Redis::default()
-                .with_tag("7")
-                .start()
-                .await
-                .map(Arc::new)
-                .unwrap();
-            let host = rc.get_host().await.unwrap().to_string();
-            let port = rc.get_host_port_ipv4(6379).await.unwrap();
-
-            let shutdown_tx = if cfg.cleanup.enabled {
-                let (tx, _) = broadcast::channel::<Command>(10);
-                Some(tx)
-            } else {
-                None
-            };
-
-            let redis = CacheConfig::new(host, port).connect().await;
-            let store = Store::new(cfg.clone(), redis, shutdown_tx);
+            let (store, rc) = init_store(&cfg).await;
 
             Self {
                 inner: AppState::new(store.clone()),
                 cfg,
-                _redis_container: rc,
+                _redis_container: Arc::new(rc),
             }
         }
 

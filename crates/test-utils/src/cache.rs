@@ -2,7 +2,17 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use log::{error, trace};
 use redis::AsyncCommands;
+use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use that_limit_cache::{Action, Error, Key, Result};
+
+#[expect(clippy::missing_panics_doc, reason = "infallible")]
+pub async fn init_redis() -> ContainerAsync<testcontainers_modules::redis::Redis> {
+    testcontainers_modules::redis::Redis::default()
+        .with_tag("7")
+        .start()
+        .await
+        .unwrap()
+}
 
 pub struct Get<K, R> {
     key: K,

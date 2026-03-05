@@ -10,4 +10,7 @@ that-limit-cache = { path = "../cache" }
 log = { workspace = true }
 simplelog = { workspace = true }
 
+tokio = { workspace = true }
+
 redis = "1.0.3"
+testcontainers-modules = { workspace = true, features = ["redis"] }

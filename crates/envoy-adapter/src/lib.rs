@@ -12,22 +12,21 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("IP Malformed")]
+    IpMalformed,
     #[error(transparent)]
     Store(#[from] StoreError),
 }
 
+// TODO: only cache error should map to status
 impl From<Error> for tonic::Status {
     fn from(e: Error) -> Self {
         error!("Mapping error to envoy gRPC response: {e:?}");
 
         match e {
-            Error::Unauthorized => Self::unauthenticated("unauthenticated"),
-            Error::Store(e) => match e {
-                StoreError::Exhausted(id, _) => {
-                    Self::resource_exhausted(format!("Identity: {id} consumed all tokens"))
-                }
-                StoreError::Cache(_) => Self::internal("Internal Server Error"),
-            },
+            Error::Unauthorized => Self::unauthenticated("Unauthenticated"),
+            Error::IpMalformed => Self::invalid_argument("IP Malformed"),
+            Error::Store(_) => Self::internal("Internal Server Error"),
         }
     }
 }

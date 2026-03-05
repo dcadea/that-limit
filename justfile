@@ -53,5 +53,5 @@ clippy:
 cov:
     cargo llvm-cov \
         --all-features \
-        --ignore-filename-regex ".*/bootstrap.rs|.*/src/main.rs" \
+        --ignore-filename-regex ".*/src/app.rs|.*/src/main.rs" \
         --open

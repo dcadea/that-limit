@@ -15,5 +15,4 @@ tower = "0.5.3"
 
 [dev-dependencies]
 testcontainers-modules = { workspace = true, features = ["redis"] }
-that-limit-cache = { path = "../cache" }
 that-limit-test-utils = { path = "../test-utils" }

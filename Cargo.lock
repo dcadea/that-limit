@@ -1956,10 +1956,15 @@ name = "that-limit-envoy-adapter"
 version = "0.1.0"
 dependencies = [
  "envoy-types",
+ "hyper-util",
  "log",
  "that-limit-core",
+ "that-limit-test-utils",
  "thiserror",
+ "tokio",
+ "tokio-stream",
  "tonic",
+ "tower",
 ]
 
 [[package]]
@@ -1969,7 +1974,6 @@ dependencies = [
  "axum",
  "log",
  "testcontainers-modules",
- "that-limit-cache",
  "that-limit-core",
  "that-limit-test-utils",
  "thiserror",
@@ -1999,8 +2003,10 @@ dependencies = [
  "log",
  "redis",
  "simplelog",
+ "testcontainers-modules",
  "that-limit-cache",
  "that-limit-core",
+ "tokio",
 ]
 
 [[package]]
