@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::HeaderName, response::IntoResponse};
 use that_limit_core::Store;
+use that_limit_ratelimit_headers::headers;
 
 use crate::extractor::Identifier;
 
-// TODO: see https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
-const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
+const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static(headers::RATE_LIMIT);
 
 pub async fn consume(
     Identifier(bucket_id): Identifier,
@@ -14,7 +14,10 @@ pub async fn consume(
 ) -> super::Result<impl IntoResponse> {
     let tokens_left = store.consume(bucket_id).await?;
 
-    Ok(([(RATE_LIMIT_HEADER_NAME, format!("r={tokens_left}"))], ()))
+    Ok((
+        [(RATE_LIMIT_HEADER_NAME, headers::rate_limit(tokens_left))],
+        (),
+    ))
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 that-limit-core = { path = "../core" }
+that-limit-ratelimit-headers = { path = "../ratelimit-headers" }
 
 log = { workspace = true }
 thiserror = { workspace = true }

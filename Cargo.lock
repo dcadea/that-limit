@@ -1959,6 +1959,7 @@ dependencies = [
  "hyper-util",
  "log",
  "that-limit-core",
+ "that-limit-ratelimit-headers",
  "that-limit-test-utils",
  "thiserror",
  "tokio",
@@ -1975,11 +1976,16 @@ dependencies = [
  "log",
  "testcontainers-modules",
  "that-limit-core",
+ "that-limit-ratelimit-headers",
  "that-limit-test-utils",
  "thiserror",
  "tokio",
  "tower",
 ]
+
+[[package]]
+name = "that-limit-ratelimit-headers"
+version = "0.1.0"
 
 [[package]]
 name = "that-limit-server"

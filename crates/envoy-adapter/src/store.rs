@@ -7,9 +7,8 @@ use envoy_types::{
     },
 };
 use that_limit_core::{BucketId, Store, StoreError};
+use that_limit_ratelimit_headers::headers;
 use tonic::{Code, Request, Response, Status};
-
-const X_RATELIMIT_REMAINING: &str = "x-ratelimit-remaining";
 
 #[derive(Clone)]
 pub struct Service {
@@ -55,8 +54,8 @@ impl RateLimitService for Service {
         let response = RateLimitResponse {
             overall_code: overall_code as i32,
             response_headers_to_add: vec![HeaderValue {
-                key: X_RATELIMIT_REMAINING.to_string(),
-                value: tokens_left.to_string(),
+                key: headers::RATE_LIMIT.to_string(),
+                value: headers::rate_limit(tokens_left),
                 raw_value: Vec::new(),
             }],
             ..Default::default()
@@ -98,14 +97,12 @@ mod test {
         service::ratelimit::v3::RateLimitRequest,
     };
     use that_limit_core::Config;
+    use that_limit_ratelimit_headers::headers;
     use that_limit_test_utils::{config::ConfigExt, store::init_store};
     use tokio::{io::duplex, time};
     use tonic::Code;
 
-    use crate::{
-        app::test::init_app,
-        store::{Service, X_RATELIMIT_REMAINING},
-    };
+    use crate::{app::test::init_app, store::Service};
 
     const TEST_USER: &str = "valera";
 
@@ -152,8 +149,8 @@ mod test {
             r.overall_code == 0 // Code::Ok
                 && r.response_headers_to_add
                     .iter()
-                    .find(|h| h.key == X_RATELIMIT_REMAINING)
-                    .is_some_and(|h| h.value == format!("{}", config.protected.lease_size - 1))
+                    .find(|h| h.key == headers::RATE_LIMIT)
+                    .is_some_and(|h| h.value == headers::rate_limit(config.protected.lease_size - 1))
         }));
     }
 
@@ -182,8 +179,10 @@ mod test {
                 r.overall_code == 0
                     && r.response_headers_to_add
                         .iter()
-                        .find(|h| h.key == X_RATELIMIT_REMAINING)
-                        .is_some_and(|h| h.value == format!("{}", config.public.lease_size - 1))
+                        .find(|h| h.key == headers::RATE_LIMIT)
+                        .is_some_and(|h| {
+                            h.value == headers::rate_limit(config.public.lease_size - 1)
+                        })
             }));
         }
     }
@@ -242,8 +241,10 @@ mod test {
             r.overall_code == 0
                 && r.response_headers_to_add
                     .iter()
-                    .find(|h| h.key == X_RATELIMIT_REMAINING)
-                    .is_some_and(|h| h.value == format!("{}", config.protected.lease_size - 2))
+                    .find(|h| h.key == headers::RATE_LIMIT)
+                    .is_some_and(|h| {
+                        h.value == headers::rate_limit(config.protected.lease_size - 2)
+                    })
         }));
     }
 
@@ -287,8 +288,8 @@ mod test {
             r.overall_code == 8 // Code::ResourceExhausted
                 && r.response_headers_to_add
                     .iter()
-                    .find(|h| h.key == X_RATELIMIT_REMAINING)
-                    .is_some_and(|h| h.value == "0")
+                    .find(|h| h.key == headers::RATE_LIMIT)
+                    .is_some_and(|h| h.value == headers::rate_limit(0))
         }));
     }
 
@@ -319,8 +320,8 @@ mod test {
             r.overall_code == 0
                 && r.response_headers_to_add
                     .iter()
-                    .find(|h| h.key == X_RATELIMIT_REMAINING)
-                    .is_some_and(|h| h.value == "1")
+                    .find(|h| h.key == headers::RATE_LIMIT)
+                    .is_some_and(|h| h.value == headers::rate_limit(1))
         }));
     }
 
@@ -347,8 +348,8 @@ mod test {
             r.overall_code == 8 // Code::ResourceExhausted
                 && r.response_headers_to_add
                     .iter()
-                    .find(|h| h.key == X_RATELIMIT_REMAINING)
-                    .is_some_and(|h| h.value == "0")
+                    .find(|h| h.key == headers::RATE_LIMIT)
+                    .is_some_and(|h| h.value == headers::rate_limit(0))
         }));
     }
 }
