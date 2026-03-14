@@ -54,9 +54,11 @@ pub mod test {
 
     use testcontainers_modules::testcontainers::ContainerAsync;
     use that_limit_core::Config;
-    use that_limit_test_utils::{logger::init_test_logger, store::init_store};
+    use that_limit_test_utils::{config::ConfigExt, logger::init_test_logger, store::init_store};
 
     use crate::state::AppState;
+
+    pub const TEST_DOMAIN: &str = "test-app";
 
     /// Wrapper App to keep redis container alive
     /// for the whole duration of the test.
@@ -68,7 +70,7 @@ pub mod test {
 
     impl TestApp {
         pub async fn new() -> Self {
-            Self::with_config(Config::default()).await
+            Self::with_config(Config::default().with_domain(TEST_DOMAIN)).await
         }
 
         pub async fn with_config(cfg: Config) -> Self {

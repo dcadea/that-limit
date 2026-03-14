@@ -22,6 +22,8 @@ pub enum Error {
     Store(#[from] StoreError),
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("Missing host")]
+    MissingHost,
 }
 
 impl IntoResponse for Error {
@@ -40,6 +42,7 @@ impl IntoResponse for Error {
                 StoreError::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
             Self::Cfg(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::MissingHost => StatusCode::BAD_REQUEST,
         }
         .into_response();
 

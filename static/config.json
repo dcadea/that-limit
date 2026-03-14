@@ -1,4 +1,5 @@
 {
+  "domains": ["that-limit"],
   "cleanup": {
     "enabled": true,
     "interval": 60

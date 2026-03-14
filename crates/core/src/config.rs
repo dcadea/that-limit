@@ -46,6 +46,7 @@ pub struct Cleanup {
 #[derive(Clone, Deserialize, Debug, Serialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Config {
+    pub domains: Vec<String>,
     pub cleanup: Cleanup,
     pub protected: Policy,
     pub public: Policy,
@@ -64,6 +65,7 @@ pub fn get(path: &str) -> Result<Config> {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            domains: Vec::default(),
             cleanup: Cleanup {
                 enabled: false,
                 interval: Duration::default(),
@@ -134,6 +136,7 @@ mod test {
         assert_eq!(
             c.unwrap(),
             Config {
+                domains: vec!["test-app".to_string(), "mock-api".to_string()],
                 cleanup: Cleanup {
                     enabled: true,
                     interval: Duration::from_secs(5),

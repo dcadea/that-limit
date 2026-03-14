@@ -11,6 +11,7 @@ pub struct Config {
 }
 
 impl Config {
+    #[must_use]
     pub const fn new(host: String, port: u16) -> Self {
         Self { host, port }
     }
@@ -24,6 +25,7 @@ impl Default for Config {
 }
 
 impl Config {
+    #[must_use]
     pub fn env() -> Option<Self> {
         let host = env::var("REDIS_HOST").ok();
         let port = env::var("REDIS_PORT")

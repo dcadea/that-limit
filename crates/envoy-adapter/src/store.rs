@@ -60,19 +60,18 @@ impl RateLimitService for Service {
     ) -> Result<Response<RateLimitResponse>, Status> {
         let req = request.into_inner();
 
-        // TODO: introduce domain in config
-        if req.domain != "that-limit" {
-            return Ok(Response::new(RateLimitResponse {
-                overall_code: Code::Ok.into(),
-                ..Default::default()
-            }));
+        if self.store.should_handle(&req.domain) {
+            let b_id = extract_identifier(&req)?;
+
+            let r = self.consume(b_id).await?;
+
+            return Ok(Response::new(r));
         }
 
-        let b_id = extract_identifier(&req)?;
-
-        let r = self.consume(b_id).await?;
-
-        Ok(Response::new(r))
+        Ok(Response::new(RateLimitResponse {
+            overall_code: Code::Ok.into(),
+            ..Default::default()
+        }))
     }
 }
 
@@ -117,6 +116,11 @@ mod test {
     use crate::{app::test::init_app, store::Service};
 
     const TEST_USER: &str = "valera";
+    const TEST_DOMAIN: &str = "test-app";
+
+    fn config() -> Config {
+        Config::default().with_domain(TEST_DOMAIN)
+    }
 
     fn for_sub(s: &str) -> Entry {
         Entry {
@@ -134,7 +138,7 @@ mod test {
 
     fn request(identity_descriptor: Entry) -> RateLimitRequest {
         RateLimitRequest {
-            domain: "that-limit".to_string(),
+            domain: TEST_DOMAIN.to_string(),
             descriptors: vec![RateLimitDescriptor {
                 entries: vec![identity_descriptor],
                 limit: None,
@@ -146,7 +150,7 @@ mod test {
 
     #[tokio::test]
     async fn should_respond_ok_on_consume_authorized() {
-        let config = Config::default();
+        let config = config();
         let (store, _rc) = init_store(&config).await;
         let svc = Service::new(store);
 
@@ -170,7 +174,7 @@ mod test {
 
     #[tokio::test]
     async fn should_respond_ok_on_consume_public() {
-        let config = Config::default();
+        let config = config();
         let (store, _rc) = init_store(&config).await;
         let svc = Service::new(store);
 
@@ -203,7 +207,7 @@ mod test {
 
     #[tokio::test]
     async fn should_fail_on_consume_public_malformed() {
-        let config = Config::default();
+        let config = config();
         let (store, _rc) = init_store(&config).await;
         let svc = Service::new(store);
 
@@ -236,7 +240,7 @@ mod test {
 
     #[tokio::test]
     async fn should_respond_ok_on_subsequent_consume() {
-        let config = Config::default();
+        let config = config();
         let (store, _rc) = init_store(&config).await;
         let svc = Service::new(store);
 
@@ -264,14 +268,14 @@ mod test {
 
     #[tokio::test]
     async fn should_fail_on_consume_unauthorized() {
-        let config = Config::default();
+        let config = config();
         let (store, _rc) = init_store(&config).await;
         let svc = Service::new(store);
 
         let mut client = init_app(svc, duplex(1024)).await;
 
         let req = RateLimitRequest {
-            domain: "that-limit".to_string(),
+            domain: TEST_DOMAIN.to_string(),
             descriptors: vec![],
             hits_addend: 1,
         };
@@ -283,7 +287,7 @@ mod test {
 
     #[tokio::test]
     async fn should_return_over_limit_when_no_quota_left() {
-        let config = Config::default()
+        let config = config()
             .with_protected_quota(1)
             .with_protected_lease_size(1);
         let (store, _rc) = init_store(&config).await;
@@ -317,7 +321,7 @@ mod test {
 
     #[tokio::test]
     async fn should_lease_more_tokens_when_bucket_is_exhausted_and_quota_not_exceeded() {
-        let config = Config::default()
+        let config = config()
             .with_protected_quota(5)
             .with_protected_lease_size(2);
         let (store, _rc) = init_store(&config).await;
@@ -346,6 +350,23 @@ mod test {
                         limit_remaining: 1,
                         ..Default::default()
                     }]
+        }));
+    }
+
+    #[tokio::test]
+    async fn should_not_handle_request_for_unknown_domain() {
+        let config = Config::default();
+        let (store, _rc) = init_store(&config).await;
+        let svc = Service::new(store);
+
+        let mut client = init_app(svc, duplex(1024)).await;
+
+        let req = request(for_sub(TEST_USER));
+        let resp = client.should_rate_limit(tonic::Request::new(req)).await;
+
+        assert!(resp.is_ok_and(|r| {
+            let r = r.get_ref();
+            r.overall_code == Code::Ok as i32 && r.statuses.is_empty()
         }));
     }
 }

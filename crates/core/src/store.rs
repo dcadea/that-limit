@@ -36,6 +36,7 @@ pub struct Store {
 const CHUNK_SIZE: usize = 2000;
 
 impl Store {
+    #[must_use]
     pub fn new(
         config: Config,
         redis: that_limit_cache::Redis,
@@ -157,6 +158,11 @@ impl Store {
 }
 
 impl Store {
+    #[must_use]
+    pub fn should_handle(&self, domain: &String) -> bool {
+        self.config.domains.contains(domain)
+    }
+
     /// # Errors
     ///
     /// Will return `Err` if bucket associated with `b_id` is exhausted.

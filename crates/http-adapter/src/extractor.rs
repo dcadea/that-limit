@@ -6,9 +6,43 @@ use axum::{
 };
 use that_limit_core::BucketId;
 
+pub const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 pub const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
 pub const X_REAL_IP: HeaderName = HeaderName::from_static("x-real-ip");
 pub const USER_ID: HeaderName = HeaderName::from_static("user_id");
+
+pub struct Host(pub String);
+
+impl Host {
+    pub fn domain(&self) -> Option<&str> {
+        self.hostname().split('.').next()
+    }
+
+    fn hostname(&self) -> &str {
+        if self.0.starts_with('[') {
+            self.0.split(']').next().map_or(&self.0, |s| &s[1..])
+        } else {
+            self.0.split(':').next().unwrap_or(&self.0)
+        }
+    }
+}
+
+impl<S> FromRequestParts<S> for Host
+where
+    S: Send + Sync,
+{
+    type Rejection = super::Error;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .headers
+            .get(&X_FORWARDED_HOST)
+            .filter(|h| !h.is_empty())
+            .and_then(|h| h.to_str().ok())
+            .map(|h| Self(h.to_string()))
+            .ok_or(super::Error::MissingHost)
+    }
+}
 
 pub struct Identifier(pub BucketId);
 

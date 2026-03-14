@@ -3,17 +3,23 @@ use std::sync::Arc;
 use axum::{extract::State, http::HeaderName, response::IntoResponse};
 use that_limit_core::Store;
 
-use crate::extractor::Identifier;
+use crate::extractor::{Host, Identifier};
 
 const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
 
 pub async fn consume(
+    host: Host,
     Identifier(bucket_id): Identifier,
     store: State<Arc<Store>>,
 ) -> super::Result<impl IntoResponse> {
-    let tokens_left = store.consume(bucket_id).await?;
+    if let Some(h) = host.domain()
+        && store.should_handle(&h.to_string())
+    {
+        let tokens_left = store.consume(bucket_id).await?;
+        return Ok(([(RATE_LIMIT_HEADER_NAME, format!("r={tokens_left}"))], ()));
+    }
 
-    Ok(([(RATE_LIMIT_HEADER_NAME, format!("r={tokens_left}"))], ()))
+    Ok(([(RATE_LIMIT_HEADER_NAME, r#""unknown""#.to_string())], ()))
 }
 
 #[cfg(test)]
@@ -30,8 +36,11 @@ mod test {
 
     use super::*;
     use crate::{
-        app::{init_router, test::TestApp},
-        extractor::{USER_ID, X_FORWARDED_FOR, X_REAL_IP},
+        app::{
+            init_router,
+            test::{TEST_DOMAIN, TestApp},
+        },
+        extractor::{USER_ID, X_FORWARDED_FOR, X_FORWARDED_HOST, X_REAL_IP},
     };
 
     const TEST_USER: &str = "valera";
@@ -41,6 +50,7 @@ mod test {
             .method(http::Method::POST)
             .uri("/consume")
             .header(USER_ID, user_id)
+            .header(X_FORWARDED_HOST, format!("{TEST_DOMAIN}.com"))
             .body(Body::empty())
             .unwrap()
     }
@@ -88,6 +98,7 @@ mod test {
                         .method(http::Method::POST)
                         .uri("/consume")
                         .header(h, ip)
+                        .header(X_FORWARDED_HOST, format!("{TEST_DOMAIN}.com"))
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -139,6 +150,7 @@ mod test {
                         .method(http::Method::POST)
                         .uri("/consume")
                         .header(h, ip)
+                        .header(X_FORWARDED_HOST, format!("{TEST_DOMAIN}.com"))
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -185,6 +197,7 @@ mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .uri("/consume")
+                    .header(X_FORWARDED_HOST, format!("{TEST_DOMAIN}.com"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -197,6 +210,7 @@ mod test {
     #[tokio::test]
     async fn should_return_exhausted_when_no_quota_left() {
         let config = Config::default()
+            .with_domain(TEST_DOMAIN)
             .with_protected_quota(1)
             .with_protected_lease_size(1);
         let app = TestApp::with_config(config).await;
@@ -224,6 +238,7 @@ mod test {
     #[tokio::test]
     async fn should_lease_more_tokens_when_bucket_is_exhausted_and_quota_not_exceeded() {
         let config = Config::default()
+            .with_domain(TEST_DOMAIN)
             .with_protected_quota(5)
             .with_protected_lease_size(2);
         let app = TestApp::with_config(config).await;
@@ -261,5 +276,45 @@ mod test {
             .map(Result::unwrap)
             .unwrap();
         assert_eq!("r=1", actual);
+    }
+
+    #[tokio::test]
+    async fn should_not_handle_request_for_unknown_domain() {
+        let config = Config::default();
+        let app = TestApp::with_config(config).await;
+        let r = init_router(app.app_state().clone());
+
+        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+
+        assert_eq!(StatusCode::OK, response.status());
+
+        let actual = response
+            .headers()
+            .get(RATE_LIMIT_HEADER_NAME)
+            .map(HeaderValue::to_str)
+            .map(Result::unwrap)
+            .unwrap();
+
+        assert_eq!(r#""unknown""#, actual);
+    }
+
+    #[tokio::test]
+    async fn should_return_bad_request_when_missing_host() {
+        let app = TestApp::new().await;
+        let r = init_router(app.app_state().clone());
+
+        let response = r
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/consume")
+                    .header(USER_ID, TEST_USER)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(StatusCode::BAD_REQUEST, response.status());
     }
 }

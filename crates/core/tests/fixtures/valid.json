@@ -1,4 +1,5 @@
 {
+  "domains": ["test-app", "mock-api"],
   "cleanup": {
     "enabled": true,
     "interval": 5
