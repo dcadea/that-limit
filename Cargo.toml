@@ -2,7 +2,6 @@
 members = [
     "crates/core",
     "crates/cache",
-    "crates/ratelimit-headers",
     "crates/envoy-adapter",
     "crates/http-adapter",
     "crates/server",
