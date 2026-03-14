@@ -20,6 +20,7 @@ export default function () {
 
   const params = {
     headers: {
+      'x-forwarded-host': 'that-limit.com',
       'user_id': userId.toString(),
     },
   };
