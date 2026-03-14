@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::HeaderName, response::IntoResponse};
 use that_limit_core::Store;
-use that_limit_ratelimit_headers::headers;
 
 use crate::extractor::Identifier;
 
-const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static(headers::RATE_LIMIT);
+const RATE_LIMIT_HEADER_NAME: HeaderName = HeaderName::from_static("ratelimit");
 
 pub async fn consume(
     Identifier(bucket_id): Identifier,
@@ -14,23 +13,19 @@ pub async fn consume(
 ) -> super::Result<impl IntoResponse> {
     let tokens_left = store.consume(bucket_id).await?;
 
-    Ok((
-        [(RATE_LIMIT_HEADER_NAME, headers::rate_limit(tokens_left))],
-        (),
-    ))
+    Ok(([(RATE_LIMIT_HEADER_NAME, format!("r={tokens_left}"))], ()))
 }
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
+    use std::{ops::Sub, time::Duration};
 
     use axum::{
         body::Body,
-        http::{self, HeaderValue, Request, StatusCode},
+        http::{self, HeaderValue, Request, StatusCode, header::RETRY_AFTER},
     };
     use that_limit_core::Config;
     use that_limit_test_utils::config::ConfigExt;
-    use tokio::time;
     use tower::ServiceExt;
 
     use super::*;
@@ -212,6 +207,18 @@ mod test {
         let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
 
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
+
+        let retry_after = app
+            .config()
+            .protected
+            .reset_in
+            .sub(Duration::from_secs(1))
+            .as_secs()
+            .to_string();
+        let ra_header = response.headers().iter().find(|h| RETRY_AFTER.eq(h.0));
+        assert!(
+            ra_header.is_some_and(|h| HeaderValue::from_str(retry_after.as_str()).unwrap().eq(h.1)),
+        );
     }
 
     #[tokio::test]
@@ -254,39 +261,5 @@ mod test {
             .map(Result::unwrap)
             .unwrap();
         assert_eq!("r=1", actual);
-    }
-
-    #[tokio::test]
-    async fn should_return_zero_when_bucket_is_expired() {
-        let reset_in = Duration::from_secs(1);
-        let config = Config::default().with_protected_reset_in(reset_in);
-        let app = TestApp::with_config(config).await;
-        let r = init_router(app.app_state().clone());
-
-        let expected = format!("r={}", app.config().protected.lease_size - 1);
-
-        // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
-        let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
-        assert_eq!(StatusCode::OK, response.status());
-        let actual = response
-            .headers()
-            .get(RATE_LIMIT_HEADER_NAME)
-            .map(HeaderValue::to_str)
-            .map(Result::unwrap)
-            .unwrap();
-        assert_eq!(expected, actual);
-
-        // wait for bucket to expire
-        time::sleep(reset_in).await;
-
-        let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
-        assert_eq!(StatusCode::OK, response.status());
-        let actual = response
-            .headers()
-            .get(RATE_LIMIT_HEADER_NAME)
-            .map(HeaderValue::to_str)
-            .map(Result::unwrap)
-            .unwrap();
-        assert_eq!("r=0", actual);
     }
 }

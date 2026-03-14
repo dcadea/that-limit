@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use dashmap::DashMap;
 use log::{debug, error};
@@ -18,7 +21,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Bucket {0} is exhausted, retry after: {1:?}")]
-    Exhausted(bucket::Id, Option<Instant>),
+    Exhausted(bucket::Id, Duration),
     #[error(transparent)]
     Cache(#[from] that_limit_cache::Error),
 }
@@ -163,7 +166,7 @@ impl Store {
         if let Some(b) = self.buckets.get(&b_id) {
             if b.is_expired() {
                 debug!("Bucket {b_id} expired, cleaning up");
-                drop(b); // TODO: test if this will result in infinite lease
+                drop(b);
                 self.buckets.remove(&b_id);
                 return Ok(0);
             }
@@ -216,8 +219,17 @@ impl Store {
         let (leased, ttl) = self.redis.execute(lease_action).await?;
 
         if leased == 0 {
-            let expires_at = self.mark_as_exhausted(b_id);
-            return Err(Error::Exhausted(b_id.clone(), expires_at));
+            if let Some(b) = self.buckets.get(b_id) {
+                b.set_exhausted();
+                debug!("Marked {b_id:?} as exhausted");
+                return Err(Error::Exhausted(
+                    b_id.clone(),
+                    b.expires_at().duration_since(Instant::now()),
+                ));
+            }
+
+            debug!("ZERO tokens left in datasource for {b_id:?}, leased nothing");
+            return Err(Error::Exhausted(b_id.clone(), ttl));
         }
 
         debug!("Leased {leased} tokens for {b_id:?}");
@@ -230,10 +242,17 @@ impl Store {
             Some(b) => {
                 if b.is_exhausted() {
                     debug!("Bucket {b_id} is exhausted");
-                    return Err(Error::Exhausted(b_id.clone(), Some(b.expires_at())));
+                    return Err(Error::Exhausted(
+                        b_id.clone(),
+                        b.expires_at().duration_since(Instant::now()),
+                    ));
                 }
 
                 if b.is_empty() {
+                    return Ok(false);
+                }
+
+                if b.is_expired() {
                     return Ok(false);
                 }
 
@@ -243,19 +262,7 @@ impl Store {
             None => Ok(false),
         }
     }
-
-    fn mark_as_exhausted(&self, b_id: &bucket::Id) -> Option<Instant> {
-        if let Some(b) = self.buckets.get(b_id) {
-            b.set_exhausted();
-            return Some(b.expires_at());
-        }
-
-        None
-    }
 }
-
-#[cfg(test)]
-use std::time::Duration;
 
 #[cfg(test)]
 impl Store {

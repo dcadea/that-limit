@@ -1,14 +1,15 @@
 use std::{net::IpAddr, sync::Arc};
 
-use envoy_types::{
-    ext_authz::v3::pb::HeaderValue,
-    pb::envoy::service::ratelimit::v3::{
-        RateLimitRequest, RateLimitResponse, rate_limit_service_server::RateLimitService,
+use envoy_types::pb::{
+    envoy::service::ratelimit::v3::{
+        RateLimitRequest, RateLimitResponse,
+        rate_limit_response::{Code, DescriptorStatus},
+        rate_limit_service_server::RateLimitService,
     },
+    google::protobuf,
 };
 use that_limit_core::{BucketId, Store, StoreError};
-use that_limit_ratelimit_headers::headers;
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response, Status};
 
 #[derive(Clone)]
 pub struct Service {
@@ -22,11 +23,31 @@ impl Service {
 }
 
 impl Service {
-    async fn consume(&self, b_id: BucketId) -> super::Result<(u64, Code)> {
+    async fn consume(&self, b_id: BucketId) -> Result<RateLimitResponse, super::Error> {
         match self.store.consume(b_id).await {
-            Ok(0) | Err(StoreError::Exhausted(_, _)) => Ok((0, Code::ResourceExhausted)),
-            Ok(tokens_left) => Ok((tokens_left, Code::Ok)),
-            Err(e) => Err(super::Error::from(e)),
+            Ok(tokens_left) => Ok(RateLimitResponse {
+                overall_code: Code::Ok.into(),
+                statuses: vec![DescriptorStatus {
+                    code: Code::Ok.into(),
+                    limit_remaining: u32::try_from(tokens_left)?,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            Err(StoreError::Exhausted(_, retry_after)) => Ok(RateLimitResponse {
+                overall_code: Code::OverLimit.into(),
+                statuses: vec![DescriptorStatus {
+                    code: Code::OverLimit.into(),
+                    limit_remaining: 0,
+                    duration_until_reset: Some(protobuf::Duration {
+                        seconds: retry_after.as_secs().cast_signed(),
+                        nanos: retry_after.subsec_nanos().cast_signed(),
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            Err(e) => Err(super::Error::Store(e)),
         }
     }
 }
@@ -42,26 +63,16 @@ impl RateLimitService for Service {
         // TODO: introduce domain in config
         if req.domain != "that-limit" {
             return Ok(Response::new(RateLimitResponse {
-                overall_code: Code::Ok as i32,
+                overall_code: Code::Ok.into(),
                 ..Default::default()
             }));
         }
 
         let b_id = extract_identifier(&req)?;
 
-        let (tokens_left, overall_code) = self.consume(b_id).await?;
+        let r = self.consume(b_id).await?;
 
-        let response = RateLimitResponse {
-            overall_code: overall_code as i32,
-            response_headers_to_add: vec![HeaderValue {
-                key: headers::RATE_LIMIT.to_string(),
-                value: headers::rate_limit(tokens_left),
-                raw_value: Vec::new(),
-            }],
-            ..Default::default()
-        };
-
-        Ok(Response::new(response))
+        Ok(Response::new(r))
     }
 }
 
@@ -90,17 +101,18 @@ fn extract_identifier(req: &RateLimitRequest) -> super::Result<BucketId> {
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
+    use std::{ops::Sub, time::Duration};
 
     use envoy_types::pb::envoy::{
         extensions::common::ratelimit::v3::{RateLimitDescriptor, rate_limit_descriptor::Entry},
-        service::ratelimit::v3::RateLimitRequest,
+        service::ratelimit::v3::{
+            RateLimitRequest,
+            rate_limit_response::{Code, DescriptorStatus},
+        },
     };
     use that_limit_core::Config;
-    use that_limit_ratelimit_headers::headers;
     use that_limit_test_utils::{config::ConfigExt, store::init_store};
-    use tokio::{io::duplex, time};
-    use tonic::Code;
+    use tokio::io::duplex;
 
     use crate::{app::test::init_app, store::Service};
 
@@ -146,11 +158,13 @@ mod test {
 
         assert!(resp.is_ok_and(|r| {
             let r = r.get_ref();
-            r.overall_code == 0 // Code::Ok
-                && r.response_headers_to_add
-                    .iter()
-                    .find(|h| h.key == headers::RATE_LIMIT)
-                    .is_some_and(|h| h.value == headers::rate_limit(config.protected.lease_size - 1))
+            r.overall_code == Code::Ok as i32
+                && r.statuses
+                    == vec![DescriptorStatus {
+                        code: Code::Ok as i32,
+                        limit_remaining: config.protected.lease_size as u32 - 1,
+                        ..Default::default()
+                    }]
         }));
     }
 
@@ -176,13 +190,13 @@ mod test {
 
             assert!(resp.is_ok_and(|r| {
                 let r = r.get_ref();
-                r.overall_code == 0
-                    && r.response_headers_to_add
-                        .iter()
-                        .find(|h| h.key == headers::RATE_LIMIT)
-                        .is_some_and(|h| {
-                            h.value == headers::rate_limit(config.public.lease_size - 1)
-                        })
+                r.overall_code == Code::Ok as i32
+                    && r.statuses
+                        == vec![DescriptorStatus {
+                            code: Code::Ok as i32,
+                            limit_remaining: config.public.lease_size as u32 - 1,
+                            ..Default::default()
+                        }]
             }));
         }
     }
@@ -216,7 +230,7 @@ mod test {
 
             let resp = client.should_rate_limit(tonic::Request::new(req)).await;
 
-            assert!(resp.is_err_and(|s| s.code() == Code::InvalidArgument));
+            assert!(resp.is_err_and(|s| s.code() == tonic::Code::InvalidArgument));
         }
     }
 
@@ -238,13 +252,13 @@ mod test {
 
         assert!(resp.is_ok_and(|r| {
             let r = r.get_ref();
-            r.overall_code == 0
-                && r.response_headers_to_add
-                    .iter()
-                    .find(|h| h.key == headers::RATE_LIMIT)
-                    .is_some_and(|h| {
-                        h.value == headers::rate_limit(config.protected.lease_size - 2)
-                    })
+            r.overall_code == Code::Ok as i32
+                && r.statuses
+                    == vec![DescriptorStatus {
+                        code: Code::Ok as i32,
+                        limit_remaining: config.protected.lease_size as u32 - 2,
+                        ..Default::default()
+                    }]
         }));
     }
 
@@ -264,11 +278,11 @@ mod test {
 
         let resp = client.should_rate_limit(tonic::Request::new(req)).await;
 
-        assert!(resp.is_err_and(|s| s.code() == Code::Unauthenticated));
+        assert!(resp.is_err_and(|s| s.code() == tonic::Code::Unauthenticated));
     }
 
     #[tokio::test]
-    async fn should_return_exhausted_when_no_quota_left() {
+    async fn should_return_over_limit_when_no_quota_left() {
         let config = Config::default()
             .with_protected_quota(1)
             .with_protected_lease_size(1);
@@ -285,11 +299,19 @@ mod test {
 
         assert!(resp.is_ok_and(|r| {
             let r = r.get_ref();
-            r.overall_code == 8 // Code::ResourceExhausted
-                && r.response_headers_to_add
-                    .iter()
-                    .find(|h| h.key == headers::RATE_LIMIT)
-                    .is_some_and(|h| h.value == headers::rate_limit(0))
+
+            let retry_after = config.protected.reset_in.sub(Duration::from_secs(1));
+
+            assert!(r.overall_code == Code::OverLimit as i32);
+            assert!(r.statuses.len() == 1);
+
+            let status = r.statuses[0].clone();
+
+            status.code() == Code::OverLimit
+                && status.limit_remaining == 0
+                && status
+                    .duration_until_reset
+                    .is_some_and(|d| d.seconds == retry_after.as_secs() as i64)
         }));
     }
 
@@ -317,39 +339,13 @@ mod test {
 
         assert!(resp.is_ok_and(|r| {
             let r = r.get_ref();
-            r.overall_code == 0
-                && r.response_headers_to_add
-                    .iter()
-                    .find(|h| h.key == headers::RATE_LIMIT)
-                    .is_some_and(|h| h.value == headers::rate_limit(1))
-        }));
-    }
-
-    #[tokio::test]
-    async fn should_return_zero_when_bucket_is_expired() {
-        let reset_in = Duration::from_secs(1);
-        let config = Config::default().with_protected_reset_in(reset_in);
-        let (store, _rc) = init_store(&config).await;
-        let svc = Service::new(store);
-
-        let mut client = init_app(svc, duplex(1024)).await;
-
-        // trigger initial lease with bucket lifetime of 1 second (min allowed by redis)
-        let req = request(for_sub(TEST_USER));
-        let _ = client.should_rate_limit(tonic::Request::new(req)).await;
-
-        time::sleep(reset_in).await;
-
-        let req = request(for_sub(TEST_USER));
-        let resp = client.should_rate_limit(tonic::Request::new(req)).await;
-
-        assert!(resp.is_ok_and(|r| {
-            let r = r.get_ref();
-            r.overall_code == 8 // Code::ResourceExhausted
-                && r.response_headers_to_add
-                    .iter()
-                    .find(|h| h.key == headers::RATE_LIMIT)
-                    .is_some_and(|h| h.value == headers::rate_limit(0))
+            r.overall_code == Code::Ok as i32
+                && r.statuses
+                    == vec![DescriptorStatus {
+                        code: Code::Ok as i32,
+                        limit_remaining: 1,
+                        ..Default::default()
+                    }]
         }));
     }
 }

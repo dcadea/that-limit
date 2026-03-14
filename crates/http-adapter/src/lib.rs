@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::IntoResponse,
@@ -36,9 +34,7 @@ impl IntoResponse for Error {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Store(e) => match e {
                 StoreError::Exhausted(_, expires_at) => {
-                    if let Some(duration) = expires_at.map(|ex| ex.duration_since(Instant::now())) {
-                        headers.insert(header::RETRY_AFTER, HeaderValue::from(duration.as_secs()));
-                    }
+                    headers.insert(header::RETRY_AFTER, HeaderValue::from(expires_at.as_secs()));
                     StatusCode::TOO_MANY_REQUESTS
                 }
                 StoreError::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
