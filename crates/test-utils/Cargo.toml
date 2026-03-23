@@ -1,6 +1,6 @@
 [package]
 name = "that-limit-test-utils"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -11,6 +11,6 @@ log = { workspace = true }
 simplelog = { workspace = true }
 
 tokio = { workspace = true }
+redis = { workspace = true }
 
-redis = "1.0.3"
 testcontainers-modules = { workspace = true, features = ["redis"] }
