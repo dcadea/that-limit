@@ -75,7 +75,7 @@ REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 ```
 
-## HTTP Adapter stress test
+## HTTP Adapter stress test (v0.1.0)
 Apple M1 Pro 10 cores (8p + 2e) - 32GB LPDDR5
 ### wrk
 ```
