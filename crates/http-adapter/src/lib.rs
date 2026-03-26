@@ -7,6 +7,7 @@ use that_limit_core::{ConfigError, StoreError};
 
 mod app;
 mod extractor;
+mod middleware;
 mod state;
 mod store;
 
@@ -22,6 +23,8 @@ pub enum Error {
     Store(#[from] StoreError),
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("Invalid token")]
+    InvalidToken,
     #[error("Missing host")]
     MissingHost,
 }
@@ -33,7 +36,7 @@ impl IntoResponse for Error {
         let mut headers = HeaderMap::new();
 
         let status = match self {
-            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Cfg(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Store(e) => match e {
                 StoreError::Exhausted(_, expires_at) => {
                     headers.insert(header::RETRY_AFTER, HeaderValue::from(expires_at.as_secs()));
@@ -41,8 +44,8 @@ impl IntoResponse for Error {
                 }
                 StoreError::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
-            Self::Cfg(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::MissingHost => StatusCode::BAD_REQUEST,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::InvalidToken | Self::MissingHost => StatusCode::BAD_REQUEST,
         }
         .into_response();
 

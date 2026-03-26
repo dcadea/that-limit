@@ -3,15 +3,18 @@ use std::{env, net::SocketAddr, sync::Arc};
 use axum::{
     Router,
     http::StatusCode,
+    middleware::from_fn,
     routing::{get, post},
 };
 use log::info;
 use that_limit_core::Store;
 
-use crate::{state::AppState, store};
+use crate::{middleware, state::AppState, store};
 
 pub fn init_router(s: AppState) -> Router {
-    let protected = Router::new().route("/consume", post(store::consume));
+    let protected = Router::new()
+        .route("/consume", post(store::consume))
+        .layer(from_fn(middleware::find_token_claims));
 
     Router::new()
         .route("/health", get(|| async { (StatusCode::OK, "UP") }))

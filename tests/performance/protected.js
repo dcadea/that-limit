@@ -1,5 +1,13 @@
 import http from 'k6/http';
 import { check } from 'k6';
+import encoding from 'k6/encoding';
+
+const tokenPool = Array.from({ length: 9000 }, (_, i) => {
+  const userId = 1000 + i;
+  const token = generateFakeToken(userId)
+
+  return `Bearer ${token}`;
+});
 
 export const options = {
   stages: [
@@ -14,14 +22,14 @@ export const options = {
 };
 
 export default function () {
-  const userId = randomIntBetween(1000, 9999);
+  const token = tokenPool[Math.floor(Math.random() * tokenPool.length)];
 
   const url = 'http://127.0.0.1:8000/consume';
 
   const params = {
     headers: {
       'x-forwarded-host': 'that-limit.com',
-      'user_id': userId.toString(),
+      'authorization': token,
     },
   };
 
@@ -32,6 +40,11 @@ export default function () {
   });
 }
 
-function randomIntBetween(min, max) {
-  return Math.floor(Math.random() * (max - min + 1) + min);
+function generateFakeToken(userId) {
+  const header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+  const payload = encoding.b64encode(JSON.stringify({
+    sub: userId.toString(),
+  }), 'rawurl');
+
+  return `${header}.${payload}.`;
 }

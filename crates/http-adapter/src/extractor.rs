@@ -6,10 +6,11 @@ use axum::{
 };
 use that_limit_core::BucketId;
 
+use crate::middleware::Claims;
+
 pub const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 pub const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
 pub const X_REAL_IP: HeaderName = HeaderName::from_static("x-real-ip");
-pub const USER_ID: HeaderName = HeaderName::from_static("user_id");
 
 pub struct Host(pub String);
 
@@ -53,8 +54,8 @@ where
     type Rejection = super::Error;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        if let Some(user_id) = parts.headers.get(&USER_ID).and_then(|v| v.to_str().ok()) {
-            return Ok(Self(BucketId::Protected(user_id.into())));
+        if let Some(claims) = parts.extensions.get::<Claims>() {
+            return Ok(Self(BucketId::Protected(claims.sub.as_str().into())));
         }
 
         let ip = parts

@@ -28,7 +28,10 @@ mod test {
 
     use axum::{
         body::Body,
-        http::{self, HeaderValue, Request, StatusCode, header::RETRY_AFTER},
+        http::{
+            self, HeaderValue, Request, StatusCode,
+            header::{self, RETRY_AFTER},
+        },
     };
     use that_limit_core::Config;
     use that_limit_test_utils::config::ConfigExt;
@@ -40,16 +43,16 @@ mod test {
             init_router,
             test::{TEST_DOMAIN, TestApp},
         },
-        extractor::{USER_ID, X_FORWARDED_FOR, X_FORWARDED_HOST, X_REAL_IP},
+        extractor::{X_FORWARDED_FOR, X_FORWARDED_HOST, X_REAL_IP},
     };
 
-    const TEST_USER: &str = "valera";
+    const TEST_TOKEN: &str = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ2YWxlcmEiLCJuYW1lIjoiVmFsZXJhIFBhcnRpemFuIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.aY8dzG8B4vl-IB2hYQ7E45FJdxwT8FECvsUlpZ16fH8";
 
-    fn consume_request(user_id: &str) -> Request<Body> {
+    fn consume_request(token: &str) -> Request<Body> {
         Request::builder()
             .method(http::Method::POST)
             .uri("/consume")
-            .header(USER_ID, user_id)
+            .header(header::AUTHORIZATION, token)
             .header(X_FORWARDED_HOST, format!("{TEST_DOMAIN}.com"))
             .body(Body::empty())
             .unwrap()
@@ -60,7 +63,7 @@ mod test {
         let app = TestApp::new().await;
         let r = init_router(app.app_state().clone());
 
-        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r.oneshot(consume_request(TEST_TOKEN)).await.unwrap();
 
         assert_eq!(StatusCode::OK, response.status());
 
@@ -167,10 +170,14 @@ mod test {
         let r = init_router(app.app_state().clone());
 
         // first call will lease
-        let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
+        let _ = r
+            .clone()
+            .oneshot(consume_request(TEST_TOKEN))
+            .await
+            .unwrap();
 
         // second call will skip lease and deduct from local store
-        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r.oneshot(consume_request(TEST_TOKEN)).await.unwrap();
 
         assert_eq!(StatusCode::OK, response.status());
 
@@ -216,9 +223,13 @@ mod test {
         let app = TestApp::with_config(config).await;
         let r = init_router(app.app_state().clone());
 
-        let _ = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
+        let _ = r
+            .clone()
+            .oneshot(consume_request(TEST_TOKEN))
+            .await
+            .unwrap();
 
-        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r.oneshot(consume_request(TEST_TOKEN)).await.unwrap();
 
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
 
@@ -245,7 +256,11 @@ mod test {
         let r = init_router(app.app_state().clone());
 
         // first request leases first batch of tokens
-        let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r
+            .clone()
+            .oneshot(consume_request(TEST_TOKEN))
+            .await
+            .unwrap();
         assert_eq!(StatusCode::OK, response.status());
         let actual = response
             .headers()
@@ -256,7 +271,11 @@ mod test {
         assert_eq!("r=1", actual);
 
         // this will consume last token
-        let response = r.clone().oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r
+            .clone()
+            .oneshot(consume_request(TEST_TOKEN))
+            .await
+            .unwrap();
         assert_eq!(StatusCode::OK, response.status());
         let actual = response
             .headers()
@@ -267,7 +286,7 @@ mod test {
         assert_eq!("r=0", actual);
 
         // one more request to lease new batch of tokens
-        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r.oneshot(consume_request(TEST_TOKEN)).await.unwrap();
         assert_eq!(StatusCode::OK, response.status());
         let actual = response
             .headers()
@@ -284,7 +303,7 @@ mod test {
         let app = TestApp::with_config(config).await;
         let r = init_router(app.app_state().clone());
 
-        let response = r.oneshot(consume_request(TEST_USER)).await.unwrap();
+        let response = r.oneshot(consume_request(TEST_TOKEN)).await.unwrap();
 
         assert_eq!(StatusCode::OK, response.status());
 
@@ -308,7 +327,7 @@ mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .uri("/consume")
-                    .header(USER_ID, TEST_USER)
+                    .header(header::AUTHORIZATION, TEST_TOKEN)
                     .body(Body::empty())
                     .unwrap(),
             )
