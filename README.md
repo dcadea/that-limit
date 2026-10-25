@@ -1,82 +1,128 @@
 # That Limit
-Rust-based distributed rate limit service.
+Distributed rate limit service in Rust, backed by Redis. Runs as a plain HTTP service or as an [Envoy rate limit service](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) (gRPC), so it plugs into Envoy, Emissary, Istio and other Envoy-based gateways.
+
+- ~164k req/s and p99 under 8 ms on a single laptop (see [Benchmarks](#benchmarks-http-adapter-v010)).
+- Hot path is lock-free and local: Redis is called once per batch of tokens, not once per request.
+- Never admits more than the quota; returns unused tokens to Redis on graceful shutdown.
+
+## How it works
+
+### Limits
+Each request is mapped to a bucket:
+
+| Bucket      | Key in Redis   | HTTP adapter source                           | Envoy adapter descriptor |
+|-------------|----------------|-----------------------------------------------|--------------------------|
+| `protected` | `sub:<sub>`    | `sub` claim of the `Authorization: Bearer` JWT | `user_id`                |
+| `public`    | `ip:<ip>`      | first `X-Forwarded-For` entry, else `X-Real-IP` | `remote_address`         |
+
+Each bucket type has a policy (see [`static/config.json`](static/config.json)): `quota` requests per `reset_in` seconds. This is a **fixed window**: the window starts with the first request for a key and the full quota comes back when the Redis key expires.
+
+Only requests whose domain is listed in `domains` are limited (the first label of `X-Forwarded-Host` for HTTP, the RLS `domain` for Envoy). Any other domain gets an allow response.
+
+### Leases
+Calling Redis on every request would cap throughput at Redis round-trips. Instead, each instance **leases** a batch of `lease_size` tokens and spends them locally:
+
+1. A request arrives for bucket `B`. If the instance holds tokens for `B`, it decrements an `AtomicU64` and answers. No lock, no network.
+2. If the local bucket is empty or expired, one task leases more tokens from Redis. Concurrent requests for the same bucket wait on a `tokio::sync::Notify` instead of all calling Redis (single flight).
+3. If Redis has no tokens left, the bucket is marked exhausted and requests get `429` (HTTP) or `OVER_LIMIT` (Envoy) with the time until the window resets.
+
+The lease is one Lua script ([`crates/cache/src/action.rs`](crates/cache/src/action.rs)), so read, decrement and TTL happen atomically in Redis even with many instances:
+
+```lua
+-- first lease of the window: create the key with quota - lease_size and the window TTL
+-- later leases: DECRBY min(remaining, lease_size); return {leased, ttl}
+```
+
+The local bucket expires together with the Redis key, so all instances reset in the same window. A background task drops expired buckets every `cleanup.interval` seconds.
+
+### Consistency trade-offs
+- **No over-admission.** Tokens leave Redis before they are spent, so the sum of admitted requests across all instances never exceeds `quota` per window.
+- **Possible under-admission.** Tokens leased by one instance cannot be spent on another. With `N` instances a client can get `429` while up to `(N - 1) * lease_size` tokens still sit unused elsewhere. Smaller `lease_size` means fairer limits and more Redis calls.
+- **Fixed window bursts.** A client can spend a full quota at the end of one window and again at the start of the next.
+
+### Failure modes
+| Event                          | Behaviour |
+|--------------------------------|-----------|
+| Redis unreachable              | Buckets with leased tokens keep serving until the lease runs out or expires. A request that needs a new lease fails: HTTP `500`, Envoy gRPC `INTERNAL`. With Envoy, [`failure_mode_deny`](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter) decides if that is fail open (Envoy default) or fail closed. The HTTP caller decides the same for itself. |
+| Graceful shutdown (`SIGTERM`)  | Unused leased tokens are returned to Redis with `INCRBY` (only when `cleanup.enabled`). |
+| Crash / `SIGKILL`              | Leased tokens are lost until the window resets: under-admission, never over-admission. |
+| Config file missing or invalid | Falls back to built-in defaults with no domains, so nothing is limited. |
+
+### Trust assumptions
+The service sits behind a gateway and trusts it:
+- JWTs are **decoded, not verified**. Validate them at the gateway before the request reaches That Limit.
+- Client IPs come from `X-Forwarded-For` / `X-Real-IP`. The gateway must overwrite these headers, or clients can pick their own bucket.
 
 ## Getting started
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
 
 ### Prerequisites
-- :crab: [Rust](https://www.rust-lang.org/tools/install) installed on your machine.
-- :whale: [Docker](https://www.docker.com/get-started) to run dependant services.
-- :gear: [just](https://github.com/casey/just) to run the project with `just` commands.
-- ⎈ [Minikube](https://minikube.sigs.k8s.io/docs/start) to run in a test cluster
+- :crab: [Rust](https://www.rust-lang.org/tools/install)
+- :whale: [Docker](https://www.docker.com/get-started) for Redis
+- :gear: [just](https://github.com/casey/just) for the recipes below
+- ⎈ [Minikube](https://minikube.sigs.k8s.io/docs/start) to run in a local cluster (optional)
 
-### Build
+### Build and run
+The server is built with exactly one adapter feature: `http` or `envoy`. The build fails without one.
 ```bash
-# Clone the repository
-git clone git@github.com:angelwing-io/that-limit.git
-cd that-limit       # Navigate to the project directory
-cargo build         # Build the project
+git clone git@github.com:dcadea/that-limit.git
+cd that-limit
+docker compose -f docker-compose.http.yml up -d redis   # Redis on localhost:6379
+cargo run -p that-limit-server --features http          # or --features envoy
 ```
 
-### Running and testing
-Service provides two features: `envoy` and `http`. Each respective feature will serve either http or grpc (envoy compatible) backend. At least one feature should be enabled. If no features are specified, service will default to `http`.
 ```bash
-cargo run \
-    -p that-limit-server \
-    --features http         # Run the project
-cargo watch -x run          # Run the project with hot-reload
-                            # (req: `cargo install cargo-watch`)
-cargo test                  # Run the tests
-
-just clippy                 # Run pedantic linter
-just cov                    # Run tests with coverage
+cargo test                  # needs Docker: tests start Redis with testcontainers
+just clippy                 # fmt + pedantic clippy
+just cov                    # tests with coverage
+just dev                    # hot reload (cargo install cargo-watch)
 ```
-Optionally you can run the project with `cargo run -p that-limit-server --release` to enable optimizations.<br>
-To run the project in **debug mode**, you can use `RUST_LOG=debug cargo run -p that-limit-server`.<br>
-Or you could just use an IDE like RustRover or Zed :rocket:.
 
+Try it:
+```bash
+curl -i -X POST http://127.0.0.1:8000/consume \
+  -H 'X-Forwarded-Host: that-limit.local' \
+  -H 'X-Forwarded-For: 203.0.113.7'
+# 200 with `ratelimit: r=<tokens left>`, or 429 with `Retry-After`
+```
 
 ### With Docker
 ```bash
-cd that-limit
-docker build --build-arg provider=http -t that-limit:dev .
-docker run -d -p 8000:8000 that-limit:dev
+just docker http            # or: just docker envoy
 ```
 
-### With just
-Run `just` to see all available recipes:
-```text
-Available recipes:
-    clippy                   # Run pedantic linter
-    cov                      # Run tests with coverage
-    dev feature="http"       # Run app server with hot reload
-    docker provider="http"   # Start in docker
-    minikube provider="http" # Start in minikube cluster
+### With Minikube
+```bash
+just minikube http          # or: just minikube envoy (installs Emissary)
 ```
-
-Additionally you can run `minikube dashboard` to check cluster in web console.
+Run `minikube dashboard` to inspect the cluster.
 
 ### Configuration
-Application will not start without the **required** environment configuration. <br>
-**Optional** variables have default values, but it is highly recommended to override these once you have a working setup.
-- Required environment variables:
+Environment variables (a `.env` file is loaded if present):
 ```dotenv
-N/A
-```
-- Optional environment variables:
-```dotenv
+CFG_PATH=static/config.json # required
 RUST_LOG=info
-
-CFG_PATH=static/config.json
 HTTP_PORT=8000
-ENVOY_PORT=55051
-
+ENVOY_PORT=50051
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 ```
 
-## HTTP Adapter stress test (v0.1.0)
-Apple M1 Pro 10 cores (8p + 2e) - 32GB LPDDR5
+Policy file (`CFG_PATH`):
+```json
+{
+  "domains": ["that-limit"],
+  "cleanup": { "enabled": true, "interval": 60 },
+  "protected": { "criteria": "sub", "quota": 10000, "lease_size": 2000, "reset_in": 600 },
+  "public":    { "criteria": "ip",  "quota": 500,   "lease_size": 100,  "reset_in": 3600 }
+}
+```
+`interval` and `reset_in` are in seconds.
+
+## Benchmarks (HTTP adapter, v0.1.0)
+Setup: one Apple M1 Pro (10 cores, 8P + 2E, 32 GB). Load generator, service and Redis all ran on the **same machine**, so they compete for CPU and the numbers are an upper bound for a single node, not a cluster figure. Most requests hit the local lease, so Redis is touched roughly once per `lease_size` requests.
+
+No baseline yet: a run of [envoyproxy/ratelimit](https://github.com/envoyproxy/ratelimit) on the same box with the same load is planned.
+
 ### wrk
 ```
 $ wrk -t4 -c150 -d30s -s ./tests/performance/protected.lua http://127.0.0.1:8000/consume
