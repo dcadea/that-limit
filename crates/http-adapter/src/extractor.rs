@@ -34,6 +34,7 @@ where
 {
     type Rejection = super::Error;
 
+    #[expect(clippy::unused_async_trait_impl, reason = "axum trait is async")]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .headers
@@ -53,6 +54,7 @@ where
 {
     type Rejection = super::Error;
 
+    #[expect(clippy::unused_async_trait_impl, reason = "axum trait is async")]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         if let Some(claims) = parts.extensions.get::<Claims>() {
             return Ok(Self(BucketId::Protected(claims.sub.as_str().into())));
