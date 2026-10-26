@@ -26,12 +26,41 @@ pub enum Criteria {
 #[serde_as]
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
+#[serde(try_from = "UncheckedPolicy")]
 pub struct Policy {
     pub criteria: Criteria,
     pub quota: u64,
     pub lease_size: u64,
     #[serde_as(as = "DurationSeconds<u64>")]
     pub reset_in: Duration,
+}
+
+/// Raw [`Policy`] as read from JSON, before validation.
+#[serde_as]
+#[derive(Deserialize)]
+struct UncheckedPolicy {
+    criteria: Criteria,
+    quota: u64,
+    lease_size: u64,
+    #[serde_as(as = "DurationSeconds<u64>")]
+    reset_in: Duration,
+}
+
+impl TryFrom<UncheckedPolicy> for Policy {
+    type Error = &'static str;
+
+    fn try_from(p: UncheckedPolicy) -> std::result::Result<Self, Self::Error> {
+        if p.lease_size == 0 || p.lease_size > p.quota {
+            return Err("lease_size must be in 1..=quota");
+        }
+
+        Ok(Self {
+            criteria: p.criteria,
+            quota: p.quota,
+            lease_size: p.lease_size,
+            reset_in: p.reset_in,
+        })
+    }
 }
 
 #[serde_as]
@@ -55,7 +84,8 @@ pub struct Config {
 /// # Errors
 ///
 /// Will return `Err` if file could not be read from `path`
-/// or if it is not in correct json format.
+/// or if it is not in correct json format
+/// or if a policy has `lease_size` outside of `1..=quota`.
 pub fn get(path: &str) -> Result<Config> {
     let content = fs::read(path)?;
     let config = serde_json::from_slice(&content)?;
@@ -74,7 +104,7 @@ impl Default for Config {
                 criteria: Criteria::Sub,
                 quota: 10000,
                 lease_size: 2000,
-                reset_in: Duration::from_secs(600),
+                reset_in: Duration::from_mins(1),
             },
             public: Policy {
                 criteria: Criteria::Ip,
@@ -170,6 +200,15 @@ mod test {
 
         assert!(
             matches!(c.unwrap_err(), Error::Json(e) if e.to_string().contains(r#"invalid type: string "600", expected u64"#))
+        );
+    }
+
+    #[test]
+    fn should_fail_when_lease_size_exceeds_quota() {
+        let c = get("tests/fixtures/invalid_lease_size.json");
+
+        assert!(
+            matches!(c.unwrap_err(), Error::Json(e) if e.to_string().starts_with("lease_size must be in 1..=quota"))
         );
     }
 }

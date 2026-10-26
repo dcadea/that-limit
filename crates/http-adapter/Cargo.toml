@@ -12,9 +12,9 @@ tokio = { workspace = true }
 tower = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
-axum = "0.8.8"
-axum-extra = { version = "0.12.5", features = ["typed-header"] }
-jsonwebtoken = "10.3.0"
+axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["typed-header"] }
+jsonwebtoken = "11.1.0"
 
 [dev-dependencies]
 testcontainers-modules = { workspace = true, features = ["redis"] }

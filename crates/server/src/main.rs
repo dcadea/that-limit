@@ -19,6 +19,8 @@ use tokio::{
 pub enum Error {
     #[error(transparent)]
     VarError(#[from] VarError),
+    #[error(transparent)]
+    Config(#[from] that_limit_core::ConfigError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -34,8 +36,7 @@ async fn main() -> Result<()> {
 
     init_logger();
 
-    let config =
-        env::var("CFG_PATH").map(|path| that_limit_core::get(&path).unwrap_or_default())?;
+    let config = that_limit_core::get(&env::var("CFG_PATH")?)?;
     let redis = CacheConfig::env().unwrap_or_default().connect().await;
 
     let shutdown_tx = if config.cleanup.enabled {

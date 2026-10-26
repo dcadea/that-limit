@@ -2,7 +2,7 @@
 Distributed rate limit service in Rust, backed by Redis. Runs as a plain HTTP service or as an [Envoy rate limit service](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) (gRPC), so it plugs into Envoy, Emissary, Istio and other Envoy-based gateways.
 
 - ~164k req/s and p99 under 8 ms on a single laptop (see [Benchmarks](#benchmarks-http-adapter-v010)).
-- Hot path is lock-free and local: Redis is called once per batch of tokens, not once per request.
+- Hot path is local: an atomic counter in a sharded map (`DashMap`), no global lock. Redis is called once per batch of tokens, not once per request.
 - Never admits more than the quota; returns unused tokens to Redis on graceful shutdown.
 
 ## How it works
@@ -17,20 +17,23 @@ Each request is mapped to a bucket:
 
 Each bucket type has a policy (see [`static/config.json`](static/config.json)): `quota` requests per `reset_in` seconds. This is a **fixed window**: the window starts with the first request for a key and the full quota comes back when the Redis key expires.
 
+Why not a sliding window or token bucket: a fixed window is one counter with a TTL, so a lease is a single `DECRBY` and instances never need synchronized clocks or continuous refill math. The cost is bursts at window edges (see [Consistency trade-offs](#consistency-trade-offs)).
+
 Only requests whose domain is listed in `domains` are limited (the first label of `X-Forwarded-Host` for HTTP, the RLS `domain` for Envoy). Any other domain gets an allow response.
 
 ### Leases
 Calling Redis on every request would cap throughput at Redis round-trips. Instead, each instance **leases** a batch of `lease_size` tokens and spends them locally:
 
-1. A request arrives for bucket `B`. If the instance holds tokens for `B`, it decrements an `AtomicU64` and answers. No lock, no network.
+1. A request arrives for bucket `B`. If the instance holds tokens for `B`, it decrements an `AtomicU64` and answers. Buckets live in a `DashMap`, so the lookup takes a read lock on one of 1024 shards, never a global lock. No network.
 2. If the local bucket is empty or expired, one task leases more tokens from Redis. Concurrent requests for the same bucket wait on a `tokio::sync::Notify` instead of all calling Redis (single flight).
 3. If Redis has no tokens left, the bucket is marked exhausted and requests get `429` (HTTP) or `OVER_LIMIT` (Envoy) with the time until the window resets.
 
-The lease is one Lua script ([`crates/cache/src/action.rs`](crates/cache/src/action.rs)), so read, decrement and TTL happen atomically in Redis even with many instances:
+The lease is one Lua script ([`crates/core/src/cache.rs`](crates/core/src/cache.rs)), so read, decrement and TTL happen atomically in Redis even with many instances:
 
 ```lua
 -- first lease of the window: create the key with quota - lease_size and the window TTL
--- later leases: DECRBY min(remaining, lease_size); return {leased, ttl}
+-- later leases: DECRBY min(remaining, lease_size)
+-- returns {leased, ttl, window}, where window = PEXPIRETIME(key)
 ```
 
 The local bucket expires together with the Redis key, so all instances reset in the same window. A background task drops expired buckets every `cleanup.interval` seconds.
@@ -44,9 +47,9 @@ The local bucket expires together with the Redis key, so all instances reset in 
 | Event                          | Behaviour |
 |--------------------------------|-----------|
 | Redis unreachable              | Buckets with leased tokens keep serving until the lease runs out or expires. A request that needs a new lease fails: HTTP `500`, Envoy gRPC `INTERNAL`. With Envoy, [`failure_mode_deny`](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter) decides if that is fail open (Envoy default) or fail closed. The HTTP caller decides the same for itself. |
-| Graceful shutdown (`SIGTERM`)  | Unused leased tokens are returned to Redis with `INCRBY` (only when `cleanup.enabled`). |
+| Graceful shutdown (`SIGTERM`)  | Unused leased tokens are returned to Redis (only when `cleanup.enabled`). A Lua script adds them back only if the key still has the expiry recorded at lease time (`PEXPIRETIME`). If the window has ended or a new one has started, the tokens are dropped, so a return never recreates a key without TTL or tops up a newer window. |
 | Crash / `SIGKILL`              | Leased tokens are lost until the window resets: under-admission, never over-admission. |
-| Config file missing or invalid | Falls back to built-in defaults with no domains, so nothing is limited. |
+| Config file missing or invalid | The service refuses to start. |
 
 ### Trust assumptions
 The service sits behind a gateway and trusts it:
@@ -57,7 +60,7 @@ The service sits behind a gateway and trusts it:
 
 ### Prerequisites
 - :crab: [Rust](https://www.rust-lang.org/tools/install)
-- :whale: [Docker](https://www.docker.com/get-started) for Redis
+- :whale: [Docker](https://www.docker.com/get-started) for Redis (7.0 or newer: the scripts use `PEXPIRETIME`)
 - :gear: [just](https://github.com/casey/just) for the recipes below
 - ⎈ [Minikube](https://minikube.sigs.k8s.io/docs/start) to run in a local cluster (optional)
 
@@ -116,7 +119,7 @@ Policy file (`CFG_PATH`):
   "public":    { "criteria": "ip",  "quota": 500,   "lease_size": 100,  "reset_in": 3600 }
 }
 ```
-`interval` and `reset_in` are in seconds.
+`interval` and `reset_in` are in seconds. Each policy needs `1 <= lease_size <= quota`; the service refuses to start otherwise.
 
 ## Benchmarks (HTTP adapter, v0.1.0)
 Setup: one Apple M1 Pro (10 cores, 8P + 2E, 32 GB). Load generator, service and Redis all ran on the **same machine**, so they compete for CPU and the numbers are an upper bound for a single node, not a cluster figure. Most requests hit the local lease, so Redis is touched roughly once per `lease_size` requests.

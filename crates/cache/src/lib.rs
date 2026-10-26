@@ -5,7 +5,7 @@ use redis::RedisError;
 mod action;
 mod config;
 mod model;
-pub use action::{Action, Incr, Lease};
+pub use action::{FromScript, Script};
 pub use config::Config as CacheConfig;
 pub use model::Key;
 
@@ -33,11 +33,8 @@ pub struct Redis {
 impl Redis {
     /// # Errors
     ///
-    /// Will return `Err` if respective redis command fails to execute.
-    pub async fn execute<A>(&self, action: A) -> Result<A::Output>
-    where
-        A: action::Action,
-    {
-        action.execute(&mut self.con.clone()).await
+    /// Will return `Err` if the script fails or its result does not convert to `T`.
+    pub async fn eval<T: FromScript>(&self, script: Script<T>) -> Result<T> {
+        script.execute(&mut self.con.clone()).await
     }
 }

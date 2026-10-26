@@ -11,6 +11,5 @@ log = { workspace = true }
 simplelog = { workspace = true }
 
 tokio = { workspace = true }
-redis = { workspace = true }
 
 testcontainers-modules = { workspace = true, features = ["redis"] }

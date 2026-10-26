@@ -11,12 +11,12 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 serde = { workspace = true, features = ["derive"] }
 
-dashmap = "6.1.0"
+dashmap = "6.2.1"
 ahash = "0.8.12"
 futures = "0.3"
 
-serde_json = "1.0.149"
-serde_with = { version = "3.18.0", features = ["time_0_3"] }
+serde_json = "1.0.154"
+serde_with = { version = "3.24.0", features = ["time_0_3"] }
 
 [dev-dependencies]
 testcontainers-modules = { workspace = true, features = ["redis"] }

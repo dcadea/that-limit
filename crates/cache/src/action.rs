@@ -1,111 +1,57 @@
-use std::{fmt::Debug, time::Duration};
+use std::{fmt::Display, marker::PhantomData};
 
 use log::trace;
-use redis::AsyncCommands;
 
 use crate::model::Key;
 
-pub trait Action {
-    type Output;
+/// Output of a [`Script`]: integers, strings, `Option`s, `Vec`s and tuples of these.
+pub trait FromScript: redis::FromRedisValue {}
 
-    #[allow(async_fn_in_trait)]
-    async fn execute(self, con: &mut redis::aio::ConnectionManager) -> super::Result<Self::Output>;
+impl<T: redis::FromRedisValue> FromScript for T {}
+
+/// Lua script run atomically on Redis with `EVALSHA` (falls back to `EVAL`).
+pub struct Script<T> {
+    src: &'static str,
+    keys: Vec<String>,
+    args: Vec<String>,
+    _out: PhantomData<T>,
 }
 
-pub struct Incr<K> {
-    key: K,
-    delta: u64,
-}
-
-impl<K> Incr<K> {
-    pub const fn new(key: K, delta: u64) -> Self {
-        Self { key, delta }
-    }
-}
-
-impl<K> Action for Incr<K>
-where
-    K: Key + Sync + Debug + ToString,
-{
-    type Output = ();
-
-    async fn execute(self, con: &mut redis::aio::ConnectionManager) -> super::Result<Self::Output> {
-        let key = self.key.to_key();
-        trace!("INCR -> {key:?}");
-        con.incr::<_, _, u64>(&key, self.delta).await?;
-        Ok(())
-    }
-}
-
-// TODO: move to core
-pub struct Lease<K> {
-    key: K,
-    size: u64,
-    quota: u64,
-    ttl: Duration,
-}
-
-impl<K> Lease<K> {
-    pub const fn new(key: K, size: u64, quota: u64, ttl: Duration) -> Self {
+impl<T: FromScript> Script<T> {
+    #[must_use]
+    pub const fn new(src: &'static str) -> Self {
         Self {
-            key,
-            size,
-            quota,
-            ttl,
+            src,
+            keys: Vec::new(),
+            args: Vec::new(),
+            _out: PhantomData,
         }
     }
-}
 
-const LEASE_SCRIPT: &str = r"
-    local key = KEYS[1]
-    local lease_size = tonumber(ARGV[1])
-    local quota = tonumber(ARGV[2])
-    local default_ttl = tonumber(ARGV[3])
+    #[must_use]
+    pub fn key(mut self, key: &impl Key) -> Self {
+        self.keys.push(key.to_key());
+        self
+    }
 
-    local current = redis.call('GET', key)
+    #[must_use]
+    pub fn arg(mut self, arg: impl Display) -> Self {
+        self.args.push(arg.to_string());
+        self
+    }
 
-    if not current then
-        local remaining = quota - lease_size
-        redis.call('SETEX', key, default_ttl, remaining)
-        return {lease_size, default_ttl}
-    end
+    pub(crate) async fn execute(self, con: &mut redis::aio::ConnectionManager) -> super::Result<T> {
+        trace!("EVAL -> {:?}", self.keys);
 
-    local tokens = tonumber(current)
-    if tokens <= 0 then
-        return {0, redis.call('TTL', key)}
-    end
+        let script = redis::Script::new(self.src);
+        let mut invocation = script.prepare_invoke();
+        for key in &self.keys {
+            invocation.key(key);
+        }
+        for arg in &self.args {
+            invocation.arg(arg);
+        }
 
-    local to_lease = math.min(tokens, lease_size)
-    redis.call('DECRBY', key, to_lease)
-    local ttl = redis.call('TTL', key)
-
-    return {to_lease, ttl}
-";
-
-impl<K> Action for Lease<&K>
-where
-    K: Key + Sync + Debug + ToString,
-{
-    type Output = (u64, Duration);
-
-    async fn execute(self, con: &mut redis::aio::ConnectionManager) -> super::Result<Self::Output> {
-        let key = self.key.to_key();
-        trace!("LEASE -> {key:?}");
-
-        let (leased, ttl_secs): (u64, u64) = redis::Script::new(LEASE_SCRIPT)
-            .key(&key)
-            .arg(self.size)
-            .arg(self.quota)
-            .arg(self.ttl.as_secs())
-            .invoke_async(con)
-            .await?;
-
-        let ttl = if ttl_secs > 0 {
-            Duration::from_secs(ttl_secs)
-        } else {
-            self.ttl
-        };
-
-        Ok((leased, ttl))
+        Ok(invocation.invoke_async(con).await?)
     }
 }

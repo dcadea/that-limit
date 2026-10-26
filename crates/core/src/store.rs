@@ -5,11 +5,11 @@ use std::{
 
 use dashmap::DashMap;
 use log::{debug, error};
-use that_limit_cache::{Incr, Lease};
 use tokio::sync::{Notify, broadcast::Sender};
 
 use crate::{
     bucket::{self, Bucket},
+    cache,
     config::Config,
     integration::Command,
 };
@@ -83,7 +83,7 @@ impl Store {
                                 .iter()
                                 .filter(|e| !e.is_empty())
                                 .filter(|e| !e.is_expired())
-                                .map(|e| (e.key().clone(), e.value().tokens()))
+                                .map(|e| (e.key().clone(), e.value().tokens(), e.value().window()))
                                 .collect();
 
                             if replenish.is_empty() {
@@ -98,9 +98,11 @@ impl Store {
                                     let redis = redis.clone();
 
                                     async move {
-                                        for (key, tokens_left) in chunk {
-                                            if let Err(e) = redis.execute(Incr::new(key.clone(), *tokens_left)).await {
-                                                error!("Could not return left tokens for: {key:?}, {e:?}");
+                                        for (key, tokens_left, window) in chunk {
+                                            match cache::release(&redis, key, *tokens_left, *window).await {
+                                                Ok(true) => {}
+                                                Ok(false) => debug!("Window for {key:?} is gone, dropped {tokens_left} tokens"),
+                                                Err(e) => error!("Could not return left tokens for: {key:?}, {e:?}"),
                                             }
                                         }
                                     }
@@ -130,19 +132,19 @@ impl Store {
 
                             debug!("Found {} expired buckets to cleanup", expired_keys.len());
 
-                            let mut handles = Vec::new();
+                            let mut js = tokio::task::JoinSet::new();
                             for chunk in expired_keys.chunks(CHUNK_SIZE) {
-                                handles.push({
-                                    let s_clone = s_clone.clone();
-                                    async move {
-                                        for key in chunk {
-                                            s_clone.buckets.remove(key);
-                                        }
+                                let s_clone = s_clone.clone();
+                                let chunk_owned = chunk.to_vec();
+
+                                js.spawn(async move {
+                                    for key in chunk_owned {
+                                        s_clone.buckets.remove(&key);
                                     }
                                 });
                             }
 
-                            join_all(handles).await;
+                            while js.join_next().await.is_some() {}
                         },
                     }
                 }
@@ -220,9 +222,14 @@ impl Store {
             bucket::Id::Protected(_) => &self.config.protected,
         };
 
-        let lease_action = Lease::new(b_id, criteria.lease_size, criteria.quota, criteria.reset_in);
-
-        let (leased, ttl) = self.redis.execute(lease_action).await?;
+        let (leased, ttl, window) = cache::lease(
+            &self.redis,
+            b_id,
+            criteria.lease_size,
+            criteria.quota,
+            criteria.reset_in,
+        )
+        .await?;
 
         if leased == 0 {
             if let Some(b) = self.buckets.get(b_id) {
@@ -239,7 +246,8 @@ impl Store {
         }
 
         debug!("Leased {leased} tokens for {b_id:?}");
-        self.buckets.insert(b_id.clone(), Bucket::new(leased, ttl));
+        self.buckets
+            .insert(b_id.clone(), Bucket::new(leased, ttl, window));
         Ok(())
     }
 
@@ -273,7 +281,7 @@ impl Store {
 #[cfg(test)]
 impl Store {
     fn add(&self, b_id: bucket::Id, tokens: u64, ttl: Duration) {
-        self.buckets.insert(b_id, Bucket::new(tokens, ttl));
+        self.buckets.insert(b_id, Bucket::new(tokens, ttl, 0));
     }
 }
 
@@ -282,7 +290,7 @@ mod test {
     use std::{net::IpAddr, sync::Arc, time::Duration};
 
     use testcontainers_modules::testcontainers::{ImageExt, runners::AsyncRunner};
-    use that_limit_test_utils::cache::Get;
+    use that_limit_test_utils::cache::get;
     use tokio::{sync::broadcast, time};
 
     use super::*;
@@ -336,66 +344,95 @@ mod test {
         assert!(store.check(&public).unwrap());
     }
 
-    #[tokio::test]
-    async fn should_perform_shutdown_on_signal() {
+    async fn start_redis() -> (
+        that_limit_cache::Redis,
+        testcontainers_modules::testcontainers::ContainerAsync<
+            testcontainers_modules::redis::Redis,
+        >,
+    ) {
         let rc = testcontainers_modules::redis::Redis::default()
             .with_tag("7")
             .start()
             .await
-            .map(Arc::new)
             .unwrap();
         let host = rc.get_host().await.unwrap().to_string();
         let port = rc.get_host_port_ipv4(6379).await.unwrap();
         let redis = that_limit_cache::CacheConfig::new(host, port)
             .connect()
             .await;
+        (redis, rc)
+    }
+
+    #[tokio::test]
+    async fn should_perform_shutdown_on_signal() {
+        let (redis, _rc) = start_redis().await;
 
         let cfg = Config::default().with_cleanup(Cleanup {
             enabled: true,
-            interval: Duration::from_millis(25),
+            interval: Duration::from_secs(60),
         });
 
         let (shutdown_tx, _) = broadcast::channel::<Command>(10);
-
-        let tx_clone = shutdown_tx.clone();
-        tokio::spawn(async move {
-            let tx_clone = tx_clone.clone();
-            time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(Command::Shutdown).unwrap();
-        });
-
         let store = Store::new(cfg.clone(), redis.clone(), Some(shutdown_tx.clone()));
 
         let valera = bucket::Id::Protected("valera".into());
-        let jora = bucket::Id::Protected("jora".into());
         let public = bucket::Id::Public("89.28.75.89".parse::<IpAddr>().unwrap());
 
-        for b_id in [&valera, &jora, &public] {
-            let tokens = cfg.quota(b_id);
-            let ttl = cfg.reset_in(b_id);
-            store.add(b_id.clone(), tokens, ttl);
-        }
+        // leases lease_size tokens and spends one
+        store.consume(valera.clone()).await.unwrap();
+        store.consume(public.clone()).await.unwrap();
 
-        // wait for shutdown command
-        time::sleep(Duration::from_millis(75)).await;
+        let mut rx = shutdown_tx.subscribe();
+        shutdown_tx.send(Command::Shutdown).unwrap();
+        while !matches!(rx.recv().await, Ok(Command::CleanupComplete)) {}
 
-        // no cleanup was performed, all buckets should still have tokens left
-        assert!(store.check(&valera).unwrap());
-        assert!(store.check(&jora).unwrap());
-        assert!(store.check(&public).unwrap());
-
-        // tokens should return to redis
+        // unspent tokens are back in redis
         assert_eq!(
-            cfg.protected.quota,
-            redis.execute(Get::<_, u64>::new(valera)).await.unwrap()
+            Some(cfg.protected.quota - 1),
+            redis.eval(get(&valera)).await.unwrap()
         );
         assert_eq!(
-            cfg.protected.quota,
-            redis.execute(Get::<_, u64>::new(jora)).await.unwrap()
+            Some(cfg.public.quota - 1),
+            redis.eval(get(&public)).await.unwrap()
         );
-        assert_eq!(
-            cfg.public.quota,
-            redis.execute(Get::<_, u64>::new(public)).await.unwrap()
-        )
+    }
+
+    #[tokio::test]
+    async fn should_not_release_into_expired_window() {
+        let (redis, _rc) = start_redis().await;
+        let valera = bucket::Id::Protected("valera".into());
+
+        let (_, _, window) = cache::lease(&redis, &valera, 10, 100, Duration::from_secs(1))
+            .await
+            .unwrap();
+        time::sleep(Duration::from_millis(1100)).await;
+
+        let released = cache::release(&redis, &valera, 10, window).await.unwrap();
+
+        assert!(!released);
+        // key is not recreated without TTL
+        assert_eq!(None, redis.eval(get(&valera)).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn should_not_release_into_newer_window() {
+        let (redis, _rc) = start_redis().await;
+        let valera = bucket::Id::Protected("valera".into());
+
+        let (_, _, old_window) = cache::lease(&redis, &valera, 10, 100, Duration::from_secs(1))
+            .await
+            .unwrap();
+        time::sleep(Duration::from_millis(1100)).await;
+        // another instance opens the next window
+        cache::lease(&redis, &valera, 10, 100, Duration::from_secs(60))
+            .await
+            .unwrap();
+
+        let released = cache::release(&redis, &valera, 10, old_window)
+            .await
+            .unwrap();
+
+        assert!(!released);
+        assert_eq!(Some(90), redis.eval(get(&valera)).await.unwrap());
     }
 }

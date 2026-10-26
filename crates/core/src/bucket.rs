@@ -28,16 +28,18 @@ impl Display for Id {
 pub struct Bucket {
     tokens: AtomicU64,
     expires_at: Instant,
+    window: i64,
     exhausted: AtomicBool,
 }
 
 impl Bucket {
-    pub fn new(tokens: u64, ttl: Duration) -> Self {
+    pub fn new(tokens: u64, ttl: Duration, window: i64) -> Self {
         let expires_at = Instant::now().add(ttl);
 
         Self {
             tokens: AtomicU64::new(tokens),
             expires_at,
+            window,
             exhausted: AtomicBool::new(false),
         }
     }
@@ -56,6 +58,10 @@ impl Bucket {
 
     pub const fn expires_at(&self) -> Instant {
         self.expires_at
+    }
+
+    pub const fn window(&self) -> i64 {
+        self.window
     }
 
     pub fn set_exhausted(&self) {
