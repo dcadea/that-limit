@@ -398,6 +398,19 @@ mod test {
     }
 
     #[tokio::test]
+    async fn should_not_outlive_redis_window() {
+        let (redis, _rc) = start_redis().await;
+        let valera = bucket::Id::Protected("valera".into());
+
+        let (_, ttl, _) = cache::lease(&redis, &valera, 10, 100, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        // timed from before the round trip, so strictly below the window length
+        assert!(ttl < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
     async fn should_not_release_into_expired_window() {
         let (redis, _rc) = start_redis().await;
         let valera = bucket::Id::Protected("valera".into());

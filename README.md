@@ -7,7 +7,7 @@ Distributed rate limit service in Rust, backed by Redis. Runs as a plain HTTP se
 
 - ~164k req/s and p99 under 8 ms on a single laptop (see [Benchmarks](#benchmarks-http-adapter-v010)).
 - Hot path is local: an atomic counter in a sharded map (`DashMap`), no global lock. Redis is called once per batch of tokens, not once per request.
-- Never admits more than the quota; returns unused tokens to Redis on graceful shutdown.
+- Never admits more than the quota while Redis keeps its keys; returns unused tokens to Redis on graceful shutdown.
 
 ## How it works
 
@@ -21,7 +21,7 @@ Each request is mapped to a bucket:
 
 Each bucket type has a policy (see [`static/config.json`](static/config.json)): `quota` requests per `reset_in` seconds. This is a **fixed window**: the window starts with the first request for a key and the full quota comes back when the Redis key expires.
 
-Why not a sliding window or token bucket: a fixed window is one counter with a TTL, so a lease is a single `DECRBY` and instances never need synchronized clocks or continuous refill math. The cost is bursts at window edges (see [Consistency trade-offs](#consistency-trade-offs)).
+Why not a sliding window or token bucket: a fixed window is one counter with a TTL, so a lease is one small Lua script (a conditional `DECRBY` on that counter) and instances need neither synchronized clocks nor continuous refill math. The cost is bursts at window edges (see [Consistency trade-offs](#consistency-trade-offs)).
 
 Only requests whose domain is listed in `domains` are limited (the first label of `X-Forwarded-Host` for HTTP, the RLS `domain` for Envoy). Any other domain gets an allow response.
 
@@ -37,13 +37,13 @@ The lease is one Lua script ([`crates/core/src/cache.rs`](crates/core/src/cache.
 ```lua
 -- first lease of the window: create the key with quota - lease_size and the window TTL
 -- later leases: DECRBY min(remaining, lease_size)
--- returns {leased, ttl, window}, where window = PEXPIRETIME(key)
+-- returns {leased, PTTL(key), window}, where window = PEXPIRETIME(key)
 ```
 
-The local bucket expires together with the Redis key, so all instances reset in the same window. A background task drops expired buckets every `cleanup.interval` seconds.
+The local bucket expires on the instance's monotonic clock after the key's `PTTL`, counted from before the Redis call. It therefore never outlives the Redis window, whatever the round trip took, and wall-clock skew between machines plays no part. `window` is only an id, compared inside Redis. A background task drops expired buckets every `cleanup.interval` seconds.
 
 ### Consistency trade-offs
-- **No over-admission.** Tokens leave Redis before they are spent, so the sum of admitted requests across all instances never exceeds `quota` per window.
+- **No over-admission.** Tokens leave Redis before they are spent, so the sum of admitted requests across all instances never exceeds `quota` per window. This holds as long as Redis keeps its keys (see [Failure modes](#failure-modes)).
 - **Possible under-admission.** Tokens leased by one instance cannot be spent on another. With `N` instances a client can get `429` while up to `(N - 1) * lease_size` tokens still sit unused elsewhere. Smaller `lease_size` means fairer limits and more Redis calls.
 - **Fixed window bursts.** A client can spend a full quota at the end of one window and again at the start of the next.
 
@@ -53,6 +53,7 @@ The local bucket expires together with the Redis key, so all instances reset in 
 | Redis unreachable              | Buckets with leased tokens keep serving until the lease runs out or expires. A request that needs a new lease fails: HTTP `500`, Envoy gRPC `INTERNAL`. With Envoy, [`failure_mode_deny`](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter) decides if that is fail open (Envoy default) or fail closed. The HTTP caller decides the same for itself. |
 | Graceful shutdown (`SIGTERM`)  | Unused leased tokens are returned to Redis (only when `cleanup.enabled`). A Lua script adds them back only if the key still has the expiry recorded at lease time (`PEXPIRETIME`). If the window has ended or a new one has started, the tokens are dropped, so a return never recreates a key without TTL or tops up a newer window. |
 | Crash / `SIGKILL`              | Leased tokens are lost until the window resets: under-admission, never over-admission. |
+| Redis loses keys               | A restart without persistence, a failover to an async replica that missed recent writes, or eviction under `maxmemory` drops counters. The next lease opens a fresh window with the full quota while instances may still hold tokens from the old one, so a client can get up to about one extra quota. Run Redis with persistence (AOF), `noeviction`, and failover that does not lose acknowledged writes if this matters. |
 | Config file missing or invalid | The service refuses to start. |
 
 ### Trust assumptions

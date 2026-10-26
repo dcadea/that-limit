@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::trace;
 use that_limit_cache::{Key, Redis, Result, Script};
@@ -25,19 +25,18 @@ const LEASE_SCRIPT: &str = r"
     if not current then
         local remaining = quota - lease_size
         redis.call('SETEX', key, default_ttl, remaining)
-        return {lease_size, default_ttl, redis.call('PEXPIRETIME', key)}
+        return {lease_size, redis.call('PTTL', key), redis.call('PEXPIRETIME', key)}
     end
 
     local tokens = tonumber(current)
     if tokens <= 0 then
-        return {0, redis.call('TTL', key), redis.call('PEXPIRETIME', key)}
+        return {0, redis.call('PTTL', key), redis.call('PEXPIRETIME', key)}
     end
 
     local to_lease = math.min(tokens, lease_size)
     redis.call('DECRBY', key, to_lease)
-    local ttl = redis.call('TTL', key)
 
-    return {to_lease, ttl, redis.call('PEXPIRETIME', key)}
+    return {to_lease, redis.call('PTTL', key), redis.call('PEXPIRETIME', key)}
 ";
 
 /// Takes up to `size` tokens for `id` from the current window,
@@ -45,6 +44,9 @@ const LEASE_SCRIPT: &str = r"
 ///
 /// Returns leased tokens, time left in the window and the window id
 /// (key expiry as unix time in ms, see `PEXPIRETIME`).
+///
+/// Time left is measured from before the call, so a local bucket built from it
+/// never outlives the Redis window, whatever the round trip took.
 pub async fn lease(
     redis: &Redis,
     id: &bucket::Id,
@@ -54,7 +56,8 @@ pub async fn lease(
 ) -> Result<(u64, Duration, i64)> {
     trace!("LEASE -> {id}");
 
-    let (leased, ttl_secs, window): (u64, u64, i64) = redis
+    let started = Instant::now();
+    let (leased, pttl, window): (u64, u64, i64) = redis
         .eval(
             Script::new(LEASE_SCRIPT)
                 .key(id)
@@ -64,11 +67,7 @@ pub async fn lease(
         )
         .await?;
 
-    let ttl = if ttl_secs > 0 {
-        Duration::from_secs(ttl_secs)
-    } else {
-        ttl
-    };
+    let ttl = Duration::from_millis(pttl).saturating_sub(started.elapsed());
 
     Ok((leased, ttl, window))
 }
