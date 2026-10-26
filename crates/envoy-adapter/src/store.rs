@@ -100,7 +100,7 @@ fn extract_identifier(req: &RateLimitRequest) -> super::Result<BucketId> {
 
 #[cfg(test)]
 mod test {
-    use std::{ops::Sub, time::Duration};
+    use std::time::Duration;
 
     use envoy_types::pb::envoy::{
         extensions::common::ratelimit::v3::{RateLimitDescriptor, rate_limit_descriptor::Entry},
@@ -141,8 +141,7 @@ mod test {
             domain: TEST_DOMAIN.to_string(),
             descriptors: vec![RateLimitDescriptor {
                 entries: vec![identity_descriptor],
-                limit: None,
-                hits_addend: None,
+                ..Default::default()
             }],
             hits_addend: 1,
         }
@@ -166,7 +165,7 @@ mod test {
                 && r.statuses
                     == vec![DescriptorStatus {
                         code: Code::Ok as i32,
-                        limit_remaining: config.protected.lease_size as u32 - 1,
+                        limit_remaining: u32::try_from(config.protected.lease_size).unwrap() - 1,
                         ..Default::default()
                     }]
         }));
@@ -198,7 +197,7 @@ mod test {
                     && r.statuses
                         == vec![DescriptorStatus {
                             code: Code::Ok as i32,
-                            limit_remaining: config.public.lease_size as u32 - 1,
+                            limit_remaining: u32::try_from(config.public.lease_size).unwrap() - 1,
                             ..Default::default()
                         }]
             }));
@@ -260,7 +259,7 @@ mod test {
                 && r.statuses
                     == vec![DescriptorStatus {
                         code: Code::Ok as i32,
-                        limit_remaining: config.protected.lease_size as u32 - 2,
+                        limit_remaining: u32::try_from(config.protected.lease_size).unwrap() - 2,
                         ..Default::default()
                     }]
         }));
@@ -304,10 +303,13 @@ mod test {
         assert!(resp.is_ok_and(|r| {
             let r = r.get_ref();
 
-            let retry_after = config.protected.reset_in.sub(Duration::from_secs(1));
+            let retry_after = config
+                .protected
+                .reset_in
+                .saturating_sub(Duration::from_secs(1));
 
-            assert!(r.overall_code == Code::OverLimit as i32);
-            assert!(r.statuses.len() == 1);
+            assert_eq!(r.overall_code, Code::OverLimit as i32);
+            assert_eq!(r.statuses.len(), 1);
 
             let status = r.statuses[0].clone();
 
@@ -315,7 +317,7 @@ mod test {
                 && status.limit_remaining == 0
                 && status
                     .duration_until_reset
-                    .is_some_and(|d| d.seconds == retry_after.as_secs() as i64)
+                    .is_some_and(|d| d.seconds == i64::try_from(retry_after.as_secs()).unwrap())
         }));
     }
 

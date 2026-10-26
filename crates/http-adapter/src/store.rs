@@ -24,7 +24,7 @@ pub async fn consume(
 
 #[cfg(test)]
 mod test {
-    use std::{ops::Sub, time::Duration};
+    use std::time::Duration;
 
     use axum::{
         body::Body,
@@ -237,7 +237,7 @@ mod test {
             .config()
             .protected
             .reset_in
-            .sub(Duration::from_secs(1))
+            .saturating_sub(Duration::from_secs(1))
             .as_secs()
             .to_string();
         let ra_header = response.headers().iter().find(|h| RETRY_AFTER.eq(h.0));

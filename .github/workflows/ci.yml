@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      # Caches ~/.cargo (registry, git, installed binaries) and ./target,
+      - name: Cache cargo & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # server builds with exactly one adapter feature, so lint it once per feature
+      - name: Clippy
+        env:
+          LINTS: -W clippy::pedantic -W clippy::nursery -W clippy::unwrap_used -D warnings
+        run: |
+          cargo clippy --workspace --exclude that-limit-server --all-features --all-targets -- $LINTS
+          cargo clippy -p that-limit-server --features http --all-targets -- $LINTS
+          cargo clippy -p that-limit-server --features envoy --all-targets -- $LINTS
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      # Runs the tests and fails the job if any fail
+      - name: Test & coverage
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

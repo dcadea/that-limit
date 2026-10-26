@@ -369,7 +369,7 @@ mod test {
 
         let cfg = Config::default().with_cleanup(Cleanup {
             enabled: true,
-            interval: Duration::from_secs(60),
+            interval: Duration::from_mins(1),
         });
 
         let (shutdown_tx, _) = broadcast::channel::<Command>(10);
@@ -424,7 +424,7 @@ mod test {
             .unwrap();
         time::sleep(Duration::from_millis(1100)).await;
         // another instance opens the next window
-        cache::lease(&redis, &valera, 10, 100, Duration::from_secs(60))
+        cache::lease(&redis, &valera, 10, 100, Duration::from_mins(1))
             .await
             .unwrap();
 

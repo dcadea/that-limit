@@ -121,6 +121,7 @@ use crate::bucket;
 
 #[cfg(test)]
 impl Config {
+    #[must_use]
     pub fn with_cleanup(&self, cleanup: Cleanup) -> Self {
         Self {
             cleanup,
@@ -128,6 +129,7 @@ impl Config {
         }
     }
 
+    #[must_use]
     pub fn with_protected_reset_in(&self, reset_in: Duration) -> Self {
         Self {
             protected: Policy {
@@ -138,6 +140,7 @@ impl Config {
         }
     }
 
+    #[must_use]
     pub const fn quota(&self, b_id: &bucket::Id) -> u64 {
         match b_id {
             bucket::Id::Public(_) => self.public.quota,
@@ -145,6 +148,7 @@ impl Config {
         }
     }
 
+    #[must_use]
     pub const fn reset_in(&self, b_id: &bucket::Id) -> Duration {
         match b_id {
             bucket::Id::Public(_) => self.public.reset_in,
@@ -175,7 +179,7 @@ mod test {
                     criteria: Criteria::Sub,
                     quota: 10000,
                     lease_size: 2000,
-                    reset_in: Duration::from_secs(600)
+                    reset_in: Duration::from_mins(10)
                 },
                 public: Policy {
                     criteria: Criteria::Ip,

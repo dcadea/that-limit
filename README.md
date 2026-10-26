@@ -1,4 +1,8 @@
 # That Limit
+
+[![CI](https://github.com/dcadea/that-limit/actions/workflows/ci.yml/badge.svg)](https://github.com/dcadea/that-limit/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dcadea/that-limit/branch/main/graph/badge.svg)](https://codecov.io/gh/dcadea/that-limit)
+
 Distributed rate limit service in Rust, backed by Redis. Runs as a plain HTTP service or as an [Envoy rate limit service](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) (gRPC), so it plugs into Envoy, Emissary, Istio and other Envoy-based gateways.
 
 - ~164k req/s and p99 under 8 ms on a single laptop (see [Benchmarks](#benchmarks-http-adapter-v010)).

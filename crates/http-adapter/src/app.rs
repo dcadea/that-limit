@@ -82,7 +82,7 @@ pub mod test {
             let (store, rc) = init_store(&cfg).await;
 
             Self {
-                inner: AppState::new(store.clone()),
+                inner: AppState::new(store),
                 cfg,
                 _redis_container: Arc::new(rc),
             }

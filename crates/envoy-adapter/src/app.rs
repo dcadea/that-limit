@@ -65,11 +65,9 @@ pub mod test {
                     let client = client.take();
 
                     async move {
-                        if let Some(client) = client {
-                            Ok(TokioIo::new(client))
-                        } else {
-                            Err(std::io::Error::other("Client already taken"))
-                        }
+                        client
+                            .map(TokioIo::new)
+                            .ok_or_else(|| std::io::Error::other("Client already taken"))
                     }
                 }))
                 .await
