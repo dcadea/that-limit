@@ -74,7 +74,7 @@ impl Bucket {
 
     pub fn consume(&self) -> u64 {
         self.tokens
-            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |v| v.checked_sub(1))
+            .try_update(Ordering::AcqRel, Ordering::Relaxed, |v| v.checked_sub(1))
             .map_or(0, |old| old - 1)
     }
 }
